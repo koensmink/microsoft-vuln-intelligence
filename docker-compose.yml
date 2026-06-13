@@ -26,7 +26,7 @@ services:
         condition: service_healthy
   collector:
     build: ./collector
-    restart: unless-stopped
+    restart: "no"
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/msvi
       MSRC_API_BASE_URL: https://api.msrc.microsoft.com/cvrf/v3.0/cvrf
