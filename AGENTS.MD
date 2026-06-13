@@ -1,421 +1,340 @@
-AGENTS.md
+You are working on repository: microsoft-vuln-intelligence.
 
-Project
+Goal:
+Build a Docker-based Microsoft vulnerability intelligence platform using the Microsoft MSRC CVRF API v3.0 as source of truth.
 
-Build a self-hosted Microsoft Vulnerability Intelligence Platform.
+Current state:
+- Docker Compose starts successfully.
+- PostgreSQL starts.
+- FastAPI backend starts.
+- Collector can fetch MSRC CVRF data.
+- Frontend can reach the backend.
+- Basic CVE import works.
+- Current import is incomplete and too flat.
 
-The application collects Microsoft CVEs from the Microsoft Security Response Center (MSRC) CVRF API and exposes the information through:
+Important finding:
+MSRC includes CVEs for Microsoft-distributed components such as Azure Linux.
+Example:
+ProductID 21344-17084 resolves to:
+"azl3 kernel 6.6.139.1-1 on Azure Linux 3.0"
 
-* REST API
-* Web frontend
-* PostgreSQL database
+Therefore:
+- Do NOT exclude CVEs because they look like Linux/kernel/upstream/open-source CVEs.
+- Do NOT filter based on CVE title.
+- ProductID and ProductTree are the source of truth.
+- Applicability/context must come from MSRC ProductTree + ProductStatuses + Threats + CVSSScoreSets + Remediations.
 
-The platform is informational only.
-
-The platform MUST NOT:
-
-* Connect to customer environments
-* Connect to Microsoft tenants
-* Perform vulnerability scanning
-* Determine applicability automatically
-* Store customer data
-
-The platform MUST:
-
-* Present factual Microsoft vulnerability information
-* Show affected products
-* Show remediation information
-* Show release history
-* Expose all data through a documented REST API
-* Run entirely in Docker
-
-⸻
-
-Primary Data Source
-
-Use only the Microsoft Security Update Guide / MSRC CVRF API.
-
-Examples:
-
+Primary source:
+https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/{release}
+Example:
 https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2026-Jun
 
-Design the collector so that future enrichment sources can be added without major refactoring.
+Architecture:
+- PostgreSQL
+- FastAPI backend
+- Python collector
+- Next.js frontend
+- Docker Compose
 
-⸻
+Required refactor:
 
-Architecture
+1. Collector
 
-frontend
-    │
-    ▼
-backend-api
-    │
-    ▼
-postgres
-collector
-    │
-    ▼
-MSRC API
+Refactor collector/app/sync.py.
 
-Repository structure:
+Requirements:
+- Fetch MSRC CVRF release documents.
+- Validate HTTP status before parsing JSON.
+- Validate content-type/body before parsing JSON.
+- Keep imports idempotent.
+- Parse localized text objects by reading their Value property.
+  Example:
+  {"Value": "June 2026 Security Updates"} -> "June 2026 Security Updates"
 
-/
-├── frontend/
-├── backend/
-├── collector/
-├── database/
-├── docker/
-├── docs/
-├── tests/
-├── docker-compose.yml
-└── AGENTS.md
+Parse:
+- DocumentTitle.Value
+- Vulnerability[].CVE
+- Vulnerability[].Title.Value
+- Vulnerability[].Notes
+- Vulnerability[].ReleaseDate
+- Vulnerability[].RevisionHistory
+- ProductTree.FullProductName
+- ProductTree.Branch recursively if needed
+- ProductStatuses[].ProductID
+- Threats[].ProductID
+- Threats[].Type
+- Threats[].Description.Value
+- CVSSScoreSets[].ProductID
+- CVSSScoreSets[].BaseScore
+- CVSSScoreSets[].TemporalScore
+- CVSSScoreSets[].Vector
+- Remediations[].ProductID
+- Remediations[].Type
+- Remediations[].Description.Value
+- Remediations[].URL
+- Remediations[].SubType
 
-⸻
+ProductID resolution:
+- Build a ProductID -> product metadata map from ProductTree.
+- Use ProductStatuses[].ProductID to determine affected products.
+- For each CVE and affected ProductID, create a product-specific vulnerability row.
+- Severity, impact, CVSS and remediation are product-specific, not only CVE-specific.
 
-Technology Stack
+Threat type handling:
+- Type 0 = Impact
+- Type 3 = Maximum severity
+Use MSRC structure as source of truth.
 
-Backend:
+Remediation type handling:
+- Type 2 = KB / Security Update where available
+- Type 5 = Known Issue where available
+Preserve unknown remediation types rather than dropping them.
 
-* Python 3.13
-* FastAPI
-* SQLAlchemy
-* Alembic
-* Pydantic
+2. Database
 
-Database:
+Refactor schema if needed using Alembic.
 
-* PostgreSQL 17
-
-Frontend:
-
-* Next.js
-* React
-* TypeScript
-* Tailwind
-
-Containerization:
-
-* Docker
-* Docker Compose
-
-Testing:
-
-* Pytest
-* Playwright
-
-⸻
-
-Database Design
-
-Create normalized tables.
+Use normalized tables:
 
 releases
-
-id
-release_name
-release_date
-revision_date
-document_title
-created_at
+- id
+- release_name
+- release_date
+- revision_date
+- document_title
+- created_at
+- updated_at
 
 cves
-
-id
-cve_id
-title
-description
-severity
-cvss_score
-impact
-publicly_disclosed
-exploited
-release_id
-created_at
-updated_at
+- id
+- cve_id
+- title
+- description
+- release_date
+- release_id
+- created_at
+- updated_at
 
 products
+- id
+- product_id
+- name
+- cpe
+- family
+- created_at
+- updated_at
 
-id
-name
-family
-vendor
-
-affected_products
-
-id
-cve_id
-product_id
-fixed_build
-kb_article
-download_url
+cve_products
+- id
+- cve_id
+- product_id
+- status
+- severity
+- impact
+- cvss_base_score
+- cvss_temporal_score
+- cvss_vector
+- exploited
+- publicly_disclosed
+- created_at
+- updated_at
 
 remediations
-
-id
-cve_id
-remediation_type
-description
-url
+- id
+- cve_id
+- product_id
+- remediation_type
+- subtype
+- description
+- url
+- created_at
+- updated_at
 
 sync_runs
+- id
+- release_name
+- started_at
+- finished_at
+- status
+- records_processed
+- error_message
 
-id
-started_at
-finished_at
-status
-records_processed
-error_message
+Constraints:
+- cves.cve_id unique
+- products.product_id unique
+- cve_products unique on cve_id + product_id
+- remediations should avoid duplicates on cve_id + product_id + remediation_type + description + url
 
-⸻
+3. Backend API
 
-Collector Requirements
+Keep FastAPI.
 
-Collector runs independently.
+Required endpoints:
 
-Responsibilities:
+GET /api/v1/health
 
-1. Retrieve monthly CVRF documents.
-2. Parse vulnerabilities.
-3. Parse affected products.
-4. Parse remediations.
-5. Update database.
-6. Prevent duplicates.
-7. Preserve historical data.
+GET /api/v1/cves
+Support:
+- pagination: limit, offset
+- search by cve_id/title/product name
+- filter severity
+- filter product
+- filter exploited
+- filter publicly_disclosed
+- filter release_name
 
-Collector must be idempotent.
+GET /api/v1/cves/{cve_id}
+Return:
+- CVE base data
+- release data
+- affected products
+- per-product severity/impact/CVSS
+- remediations per product
 
-Running multiple times must not create duplicate records.
+GET /api/v1/releases
+GET /api/v1/releases/{release_name}
 
-Provide:
+GET /api/v1/products
+GET /api/v1/products/{product_id}
 
-python sync.py
-
-and
+GET /api/v1/stats
+Return:
+- total CVEs
+- total products
+- latest release
+- count by severity
+- exploited count
+- publicly disclosed count
 
 POST /api/v1/admin/sync
+Trigger collector sync for a provided release_name.
+If no release_name is provided, sync current release.
 
-⸻
+4. Frontend
 
-REST API
+Fix missing route:
+- Create frontend/app/cves/page.tsx
 
-Expose OpenAPI documentation automatically.
+Remove:
+- All placeholder CVE links
+- All hardcoded CVE references such as CVE-2026-12345
+- All mock data
 
-Base path:
+Navigation:
+- / -> Dashboard
+- /cves -> Vulnerabilities overview
+- /cves/[cve_id] -> CVE detail
+- /releases -> Releases
+- /products -> Products
 
-/api/v1
+Dashboard:
+- Total CVEs
+- Latest release
+- Critical count
+- Important count
+- Moderate count
+- Low count
+- Exploited count
+- Publicly disclosed count
 
-Endpoints:
+Vulnerabilities page:
+- Table with:
+  - CVE
+  - title
+  - release
+  - affected product count
+  - highest severity
+  - highest CVSS
+  - exploited
+  - publicly disclosed
+- Search input
+- Filters:
+  - severity
+  - exploited
+  - publicly disclosed
+  - release
+- Every CVE row links to /cves/{cve_id}
 
-Health
+CVE detail page:
+- CVE ID
+- title
+- description
+- release
+- affected products table:
+  - product name
+  - product_id
+  - severity
+  - impact
+  - CVSS base score
+  - CVSS vector
+  - remediation / KB / URL
+- Clearly show why this CVE is relevant:
+  “Included because MSRC maps this CVE to the following Microsoft product/context: {product name}”
 
-GET /health
+Products page:
+- List ProductID, name, CPE if available, CVE count
+- Link to filtered CVE list by product
 
-CVEs
-
-GET /cves
-GET /cves/{cve_id}
-
-Filtering:
-
-?severity=
-?product=
-?year=
-?month=
-?exploited=
-?publicly_disclosed=
-
-Products
-
-GET /products
-GET /products/{id}
-
-Releases
-
-GET /releases
-GET /releases/{release_name}
-
-Examples:
-
-GET /api/v1/releases/2026-Jun
-GET /api/v1/cves/CVE-2026-12345
-
-⸻
-
-Frontend Requirements
-
-Pages:
-
-Dashboard
-
-Display:
-
-* Total CVEs
-* Critical count
-* Important count
-* Exploited count
-* Latest release
-
-Vulnerabilities
-
-Data table:
-
-* CVE
-* Severity
-* Impact
-* Release
-* Exploited
-* Publicly disclosed
-
-Filters:
-
-* Severity
-* Product
-* Release
-* Search
-
-Vulnerability Details
-
-Display:
-
-* Description
-* Severity
-* Impact
-* CVSS
-* Affected products
-* KB articles
-* Remediations
-
-Releases
-
-Monthly release overview.
-
-Products
-
-All affected Microsoft products.
-
-⸻
-
-UI Requirements
+5. Frontend API behavior
 
 Use:
+NEXT_PUBLIC_API_BASE_URL=http://backend:8000/api/v1 in Docker.
 
-* Clean enterprise style
-* Responsive layout
-* Dark mode
-* Search-first design
+Do not silently swallow API errors.
+Render a clear error message when API calls fail.
 
-Do not use:
+Use:
+fetch(url, { cache: "no-store" })
 
-* Excessive animations
-* Marketing language
-* Decorative dashboards
+6. Docker Compose
 
-Focus on information density.
+Ensure:
+- backend and collector use the same DATABASE_URL
+- frontend uses backend service name internally:
+  http://backend:8000/api/v1
+- postgres has a healthcheck
+- backend waits for postgres health
+- collector waits for postgres health
+- collector restart policy is "no" for one-shot execution
 
-⸻
+7. Tests
 
-Security Requirements
+Add tests for:
+- ProductTree ProductID resolution
+- localized Value extraction
+- CVE + ProductID mapping
+- Threat severity extraction
+- CVSS extraction
+- remediation extraction
+- idempotent sync
+- GET /api/v1/cves
+- GET /api/v1/cves/{cve_id}
+- frontend /cves route exists
 
-No authentication required in MVP.
+8. Validation
 
-Design API so authentication can be added later.
+After implementation, these must work:
 
-Implement:
-
-* Input validation
-* Rate limiting
-* Structured logging
-* Non-root containers
-* Health endpoints
-
-Never expose secrets in logs.
-
-⸻
-
-Docker Requirements
-
-Provide:
-
+docker compose down
+docker compose build --no-cache
 docker compose up -d
 
-Services:
+Then:
 
-frontend
-backend
-collector
-postgres
-
-Persistent storage:
-
-postgres_data
-
-Containers must restart automatically.
-
-⸻
-
-Documentation Requirements
-
-Generate:
-
-README.md
-docs/api.md
-docs/architecture.md
-
-README must include:
-
-* Installation
-* Configuration
-* Docker startup
-* API examples
-
-⸻
-
-Testing Requirements
-
-Minimum coverage:
-
-Backend:
-
-* API tests
-* Database tests
-* Parser tests
+curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/api/v1/cves
+curl http://localhost:8000/api/v1/releases
+curl http://localhost:8000/api/v1/products
+curl http://localhost:8000/api/v1/stats
 
 Frontend:
+http://localhost:3000
+http://localhost:3000/cves
+http://localhost:3000/releases
+http://localhost:3000/products
 
-* Smoke tests
-
-Collector:
-
-* CVRF parsing tests
-
-⸻
-
-Future Extension Points
-
-Design code to support future additions:
-
-* EPSS
-* CISA KEV
-* RSS feeds
-* Email notifications
-* Webhooks
-* Multi-user authentication
-
-Do not implement these features now.
-
-Only prepare extension points.
-
-⸻
-
-Definition of Done
-
-Project is complete when:
-
-* Docker compose starts successfully
-* Database migrations run automatically
-* Collector imports MSRC data
-* REST API returns data
-* Frontend displays data
-* OpenAPI documentation is available
-* Tests pass
-* README is complete
+Manual validation:
+- /cves must not return 404.
+- No hardcoded CVE-2026-12345 may remain.
+- CVE detail pages must show affected Microsoft product/context.
+- Azure Linux CVEs must not be excluded when ProductTree maps them to Azure Linux.
