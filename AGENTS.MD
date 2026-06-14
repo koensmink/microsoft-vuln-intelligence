@@ -1,17 +1,64 @@
-Modify the collector so it no longer syncs only the current month.
+Architecture Rules
 
-Requirements:
+Source Ownership
 
-* Query the MSRC endpoint /updates first.
-* Retrieve all available release IDs.
-* Store release metadata and revision information.
-* During a normal run, automatically synchronize:
-    * current release
-    * previous release
-    * any release whose revision date changed since the last sync
-* Add a last_synced_at field for releases.
-* Add a daily scheduler container in docker-compose.
-* Collector must be idempotent and safe to run multiple times per day.
-* If a CVE changes (CVSS, severity, exploit status, product mapping, title, description), update existing records.
-* Log how many releases, CVEs and products were added or updated.
-* Exit with non-zero status only on actual synchronization failures.
+MSRC is the authoritative source for:
+
+* Releases
+* CVEs
+* Product mappings
+* Remediation information
+* Microsoft-provided impact classifications
+
+MSRC data must never be overwritten by external sources.
+
+External Enrichment
+
+External intelligence sources must be implemented as separate enrichment services.
+
+Examples:
+
+* NVD
+* FIRST EPSS
+* CISA KEV
+* ExploitDB
+* VulnCheck
+* OpenCVE
+
+Do not add external source logic to the MSRC collector.
+
+Data Separation
+
+Store enrichment data separately from MSRC data.
+
+Preferred model:
+
+* releases
+* cves
+* products
+* cve_products
+* cve_enrichment
+
+The backend may aggregate data for presentation, but data ownership must remain clear.
+
+Service Design
+
+Collectors gather source data.
+
+Enrichment workers enrich existing data.
+
+A failure in an enrichment source must never block MSRC collection.
+
+All enrichment processes must be idempotent and safe to rerun.
+
+Precedence
+
+When multiple sources provide similar information:
+
+1. MSRC
+2. NVD
+3. CISA KEV
+4. FIRST EPSS
+5. Derived values
+
+Never overwrite a higher-priority source with a lower-priority source.
