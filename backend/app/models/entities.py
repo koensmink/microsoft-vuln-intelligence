@@ -39,6 +39,7 @@ class Cve(Base):
     release: Mapped[Release | None] = relationship(back_populates="cves")
     product_links: Mapped[list["CveProduct"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
     remediations: Mapped[list["Remediation"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
+    enrichments: Mapped[list["CveEnrichment"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
 
     @property
     def affected_products(self) -> list["CveProduct"]:
@@ -70,6 +71,15 @@ class Cve(Base):
     @property
     def affected_product_count(self) -> int:
         return len(self.product_links)
+
+    @property
+    def kev_known_exploited(self) -> bool:
+        return any(enrichment.source == "kev" and enrichment.kev_known_exploited for enrichment in self.enrichments)
+
+    @property
+    def epss_score(self) -> float | None:
+        scores = [enrichment.epss_score for enrichment in self.enrichments if enrichment.epss_score is not None]
+        return max(scores, default=None)
 
 
 class Product(Base):
@@ -131,6 +141,32 @@ class Remediation(Base):
 
     cve: Mapped[Cve] = relationship(back_populates="remediations")
     product: Mapped[Product | None] = relationship()
+
+
+class CveEnrichment(Base):
+    __tablename__ = "cve_enrichment"
+    __table_args__ = (UniqueConstraint("cve_id", "source"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cve_id: Mapped[int] = mapped_column(ForeignKey("cves.id"), index=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    cvss_score: Mapped[float | None] = mapped_column(Float)
+    cvss_vector: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str | None] = mapped_column(String(64))
+    epss_score: Mapped[float | None] = mapped_column(Float)
+    epss_percentile: Mapped[float | None] = mapped_column(Float)
+    kev_known_exploited: Mapped[bool | None] = mapped_column(Boolean)
+    kev_due_date: Mapped[datetime | None] = mapped_column(Date)
+    kev_vendor_project: Mapped[str | None] = mapped_column(Text)
+    kev_product: Mapped[str | None] = mapped_column(Text)
+    kev_required_action: Mapped[str | None] = mapped_column(Text)
+    kev_notes: Mapped[str | None] = mapped_column(Text)
+    raw_json: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cve: Mapped[Cve] = relationship(back_populates="enrichments")
 
 
 class SyncRun(Base):
