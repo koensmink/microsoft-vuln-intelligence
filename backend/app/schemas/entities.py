@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
 
 
@@ -43,9 +43,13 @@ class ReleaseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     release_name: str
-    release_date: date | None = None
-    revision_date: date | None = None
+    alias: str | None = None
+    release_date: date | datetime | None = None
+    revision_date: date | datetime | None = None
     document_title: str | None = None
+    severity: str | None = None
+    cvrf_url: str | None = None
+    last_synced_at: datetime | None = None
 
 
 class CveOut(BaseModel):
