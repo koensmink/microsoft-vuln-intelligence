@@ -33,6 +33,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  collector-scheduler:
+    build: ./collector
+    restart: unless-stopped
+    command: ["sh", "-c", "while true; do python sync.py; sleep 86400; done"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/msvi
+      MSRC_API_BASE_URL: https://api.msrc.microsoft.com/cvrf/v3.0/cvrf
+    depends_on:
+      postgres:
+        condition: service_healthy
   frontend:
     build:
       context: ./frontend

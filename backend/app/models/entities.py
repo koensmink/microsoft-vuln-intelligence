@@ -11,9 +11,13 @@ class Release(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     release_name: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    release_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
-    revision_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    alias: Mapped[str | None] = mapped_column(String(32))
+    release_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revision_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     document_title: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str | None] = mapped_column(String(64))
+    cvrf_url: Mapped[str | None] = mapped_column(Text)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
