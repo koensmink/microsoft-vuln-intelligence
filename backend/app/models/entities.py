@@ -13,7 +13,7 @@ class Release(Base):
     release_name: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     release_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     revision_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
-    document_title: Mapped[str | None] = mapped_column(String(255))
+    document_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -25,7 +25,7 @@ class Cve(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     cve_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    title: Mapped[str | None] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     release_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     release_id: Mapped[int | None] = mapped_column(ForeignKey("releases.id"))
@@ -73,9 +73,9 @@ class Product(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    name: Mapped[str] = mapped_column(String(255), index=True)
-    cpe: Mapped[str | None] = mapped_column(String(255))
-    family: Mapped[str | None] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(Text, index=True)
+    cpe: Mapped[str | None] = mapped_column(Text)
+    family: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -95,10 +95,10 @@ class CveProduct(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     status: Mapped[str | None] = mapped_column(String(64))
     severity: Mapped[str | None] = mapped_column(String(64), index=True)
-    impact: Mapped[str | None] = mapped_column(String(255))
+    impact: Mapped[str | None] = mapped_column(Text)
     cvss_base_score: Mapped[float | None] = mapped_column(Float)
     cvss_temporal_score: Mapped[float | None] = mapped_column(Float)
-    cvss_vector: Mapped[str | None] = mapped_column(String(255))
+    cvss_vector: Mapped[str | None] = mapped_column(Text)
     exploited: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     publicly_disclosed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
