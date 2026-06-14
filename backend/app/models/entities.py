@@ -81,6 +81,36 @@ class Cve(Base):
         scores = [enrichment.epss_score for enrichment in self.enrichments if enrichment.epss_score is not None]
         return max(scores, default=None)
 
+    @property
+    def epss_percentile(self) -> float | None:
+        percentiles = [enrichment.epss_percentile for enrichment in self.enrichments if enrichment.epss_percentile is not None]
+        return max(percentiles, default=None)
+
+    @property
+    def kev_due_date(self):
+        return next((enrichment.kev_due_date for enrichment in self.enrichments if enrichment.source == "kev"), None)
+
+    @property
+    def kev_vendor_project(self) -> str | None:
+        return next((enrichment.kev_vendor_project for enrichment in self.enrichments if enrichment.source == "kev"), None)
+
+    @property
+    def kev_product(self) -> str | None:
+        return next((enrichment.kev_product for enrichment in self.enrichments if enrichment.source == "kev"), None)
+
+    @property
+    def kev_required_action(self) -> str | None:
+        return next((enrichment.kev_required_action for enrichment in self.enrichments if enrichment.source == "kev"), None)
+
+    @property
+    def nvd_cvss_score(self) -> float | None:
+        scores = [enrichment.cvss_score for enrichment in self.enrichments if enrichment.source == "nvd" and enrichment.cvss_score is not None]
+        return max(scores, default=None)
+
+    @property
+    def nvd_cvss_vector(self) -> str | None:
+        return next((enrichment.cvss_vector for enrichment in self.enrichments if enrichment.source == "nvd" and enrichment.cvss_vector), None)
+
 
 class Product(Base):
     __tablename__ = "products"
