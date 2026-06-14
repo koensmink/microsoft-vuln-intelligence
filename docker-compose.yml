@@ -56,5 +56,18 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    enrichment-scheduler:
+    build: ./collector
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/msvi
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "while true; do
+        python enrich.py;
+        sleep 86400;
+      done"
 volumes:
   postgres_data:
