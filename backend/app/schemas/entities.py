@@ -108,6 +108,22 @@ class TopEpssCveOut(BaseModel):
     epss_percentile: float | None = None
 
 
+class CountBucketOut(BaseModel):
+    label: str
+    count: int
+
+
+class KevCveOut(BaseModel):
+    cve_id: str
+    title: str | None = None
+    product: str | None = None
+    epss_score: float | None = None
+    cvss_score: float | None = None
+    severity: str | None = None
+    required_action: str | None = None
+    due_date: date | None = None
+
+
 class StatsOut(BaseModel):
     total_cves: int
     total_products: int
@@ -118,6 +134,21 @@ class StatsOut(BaseModel):
     total_kev_vulnerabilities: int
     average_epss_score: float | None = None
     top_epss_cves: list[TopEpssCveOut] = []
+    critical_cves: int = 0
+    highest_epss_score: float | None = None
+    epss_at_least_1_percent: int = 0
+    epss_at_least_10_percent: int = 0
+    nvd_enriched_cves: int = 0
+    cvss_at_least_9: int = 0
+    immediate_action_count: int = 0
+    high_priority_count: int = 0
+    routine_count: int = 0
+    cves_by_severity: list[CountBucketOut] = []
+    cves_by_release: list[CountBucketOut] = []
+    cves_by_impact: list[CountBucketOut] = []
+    kev_distribution: list[CountBucketOut] = []
+    cvss_score_distribution: list[CountBucketOut] = []
+    kev_cves: list[KevCveOut] = []
 
 
 class SyncRequest(BaseModel):
