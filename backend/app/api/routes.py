@@ -54,6 +54,7 @@ def get_cve(cve_id: str, db: Session = Depends(get_db)):
             joinedload(Cve.release),
             joinedload(Cve.product_links).joinedload(CveProduct.product),
             joinedload(Cve.remediations),
+            joinedload(Cve.enrichments),
         )
     )
     if not cve:

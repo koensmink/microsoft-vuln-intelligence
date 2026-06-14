@@ -29,6 +29,24 @@ class CveProductOut(BaseModel):
 AffectedProductOut = CveProductOut
 
 
+class CveEnrichmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    source: str
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    severity: str | None = None
+    epss_score: float | None = None
+    epss_percentile: float | None = None
+    kev_known_exploited: bool | None = None
+    kev_due_date: date | None = None
+    kev_vendor_project: str | None = None
+    kev_product: str | None = None
+    kev_required_action: str | None = None
+    kev_notes: str | None = None
+    fetched_at: datetime | None = None
+
+
 class RemediationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -66,11 +84,14 @@ class CveOut(BaseModel):
     exploited: bool
     release: ReleaseOut | None = None
     affected_product_count: int | None = None
+    epss_score: float | None = None
+    kev_known_exploited: bool = False
 
 
 class CveDetailOut(CveOut):
     affected_products: list[CveProductOut] = []
     remediations: list[RemediationOut] = []
+    enrichments: list[CveEnrichmentOut] = []
 
 
 class StatsOut(BaseModel):
