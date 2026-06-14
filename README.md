@@ -64,7 +64,7 @@ curl -X POST http://localhost:8000/api/v1/admin/sync -H 'Content-Type: applicati
 curl http://localhost:8000/api/v1/health
 curl http://localhost:8000/api/v1/releases/2026-Jun
 curl http://localhost:8000/api/v1/cves?severity=Critical&exploited=true
-curl http://localhost:8000/api/v1/cves/CVE-2026-12345
+curl http://localhost:8000/api/v1/cves/CVE-2026-0001
 curl http://localhost:8000/api/v1/products
 ```
 
