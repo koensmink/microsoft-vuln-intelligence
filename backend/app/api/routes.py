@@ -125,25 +125,79 @@ def get_release(release_name: str, db: Session = Depends(get_db)):
 def stats(db: Session = Depends(get_db)):
     latest = db.scalar(select(Release.release_name).order_by(Release.release_name.desc()).limit(1))
     counts = dict(db.execute(select(CveProduct.severity, func.count()).group_by(CveProduct.severity)).all())
+    severity_counts = dict(
+        db.execute(select(CveProduct.severity, func.count(func.distinct(CveProduct.cve_id))).group_by(CveProduct.severity)).all()
+    )
+    release_counts = db.execute(
+        select(func.coalesce(Release.release_name, "Unknown"), func.count(Cve.id))
+        .select_from(Cve)
+        .outerjoin(Release)
+        .group_by(Release.release_name)
+        .order_by(func.count(Cve.id).desc(), Release.release_name)
+    ).all()
+    impact_counts = db.execute(
+        select(func.coalesce(CveProduct.impact, "Unknown"), func.count(func.distinct(CveProduct.cve_id)))
+        .group_by(CveProduct.impact)
+        .order_by(func.count(func.distinct(CveProduct.cve_id)).desc())
+    ).all()
+    total_cves = db.scalar(select(func.count(Cve.id))) or 0
+    total_kev = db.scalar(
+        select(func.count(func.distinct(CveEnrichment.cve_id))).where(
+            CveEnrichment.source == "kev", CveEnrichment.kev_known_exploited.is_(True)
+        )
+    ) or 0
     top_epss_rows = db.execute(
         select(Cve.cve_id, Cve.title, CveEnrichment.epss_score, CveEnrichment.epss_percentile)
         .join(CveEnrichment)
         .where(CveEnrichment.source == "epss", CveEnrichment.epss_score.is_not(None))
         .order_by(CveEnrichment.epss_score.desc())
-        .limit(10)
+        .limit(20)
     ).all()
+    kev_rows = db.execute(
+        select(Cve)
+        .join(CveEnrichment)
+        .where(CveEnrichment.source == "kev", CveEnrichment.kev_known_exploited.is_(True))
+        .options(joinedload(Cve.product_links).joinedload(CveProduct.product), joinedload(Cve.enrichments))
+        .order_by(Cve.cve_id)
+    ).scalars().unique().all()
+    cves = db.scalars(
+        select(Cve).options(joinedload(Cve.product_links), joinedload(Cve.enrichments))
+    ).unique().all()
+    score_buckets = [
+        {"label": "0.0-3.9", "count": 0},
+        {"label": "4.0-6.9", "count": 0},
+        {"label": "7.0-8.9", "count": 0},
+        {"label": "9.0-10.0", "count": 0},
+        {"label": "Unknown", "count": 0},
+    ]
+    immediate_action_count = high_priority_count = routine_count = 0
+    for cve in cves:
+        cvss_score = cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score
+        epss_score = cve.epss_score
+        if cvss_score is None:
+            score_buckets[4]["count"] += 1
+        elif cvss_score >= 9:
+            score_buckets[3]["count"] += 1
+        elif cvss_score >= 7:
+            score_buckets[2]["count"] += 1
+        elif cvss_score >= 4:
+            score_buckets[1]["count"] += 1
+        else:
+            score_buckets[0]["count"] += 1
+        if cve.kev_known_exploited or cve.exploited or (cvss_score is not None and cvss_score >= 9) or (epss_score is not None and epss_score >= 0.5):
+            immediate_action_count += 1
+        elif cve.severity == "Critical" or (cvss_score is not None and cvss_score >= 7) or (epss_score is not None and epss_score >= 0.2):
+            high_priority_count += 1
+        else:
+            routine_count += 1
     return {
-        "total_cves": db.scalar(select(func.count(Cve.id))) or 0,
+        "total_cves": total_cves,
         "total_products": db.scalar(select(func.count(Product.id))) or 0,
         "latest_release": latest,
         "count_by_severity": {str(k): v for k, v in counts.items() if k},
         "exploited_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.exploited.is_(True))) or 0,
         "publicly_disclosed_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.publicly_disclosed.is_(True))) or 0,
-        "total_kev_vulnerabilities": db.scalar(
-            select(func.count(func.distinct(CveEnrichment.cve_id))).where(
-                CveEnrichment.source == "kev", CveEnrichment.kev_known_exploited.is_(True)
-            )
-        ) or 0,
+        "total_kev_vulnerabilities": total_kev,
         "average_epss_score": db.scalar(
             select(func.avg(CveEnrichment.epss_score)).where(
                 CveEnrichment.source == "epss", CveEnrichment.epss_score.is_not(None)
@@ -152,6 +206,33 @@ def stats(db: Session = Depends(get_db)):
         "top_epss_cves": [
             {"cve_id": row.cve_id, "title": row.title, "epss_score": row.epss_score, "epss_percentile": row.epss_percentile}
             for row in top_epss_rows
+        ],
+        "critical_cves": severity_counts.get("Critical", 0),
+        "highest_epss_score": db.scalar(select(func.max(CveEnrichment.epss_score)).where(CveEnrichment.source == "epss")),
+        "epss_at_least_1_percent": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "epss", CveEnrichment.epss_score >= 0.01)) or 0,
+        "epss_at_least_10_percent": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "epss", CveEnrichment.epss_score >= 0.10)) or 0,
+        "nvd_enriched_cves": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "nvd")) or 0,
+        "cvss_at_least_9": sum(1 for cve in cves if (cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score) is not None and (cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score) >= 9),
+        "immediate_action_count": immediate_action_count,
+        "high_priority_count": high_priority_count,
+        "routine_count": routine_count,
+        "cves_by_severity": [{"label": str(k or "Unknown"), "count": v} for k, v in severity_counts.items()],
+        "cves_by_release": [{"label": row[0], "count": row[1]} for row in release_counts],
+        "cves_by_impact": [{"label": row[0], "count": row[1]} for row in impact_counts],
+        "kev_distribution": [{"label": "CISA KEV", "count": total_kev}, {"label": "Non-KEV", "count": max(total_cves - total_kev, 0)}],
+        "cvss_score_distribution": score_buckets,
+        "kev_cves": [
+            {
+                "cve_id": cve.cve_id,
+                "title": cve.title,
+                "product": cve.kev_product or next((link.product.name for link in cve.product_links if link.product), None),
+                "epss_score": cve.epss_score,
+                "cvss_score": cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score,
+                "severity": cve.severity,
+                "required_action": cve.kev_required_action,
+                "due_date": cve.kev_due_date,
+            }
+            for cve in kev_rows
         ],
     }
 
