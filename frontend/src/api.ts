@@ -4,13 +4,17 @@ export const apiBase =
 export async function getJson<T>(path: string, fallback: T): Promise<T> {
   const url = `${apiBase}${path}`;
 
-  const res = await fetch(url, {
-    cache: "no-store",
-  });
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+    });
 
-  if (!res.ok) {
-    throw new Error(`API request failed: ${url} -> ${res.status}`);
+    if (!res.ok) {
+      return fallback;
+    }
+
+    return (await res.json()) as T;
+  } catch {
+    return fallback;
   }
-
-  return (await res.json()) as T;
 }
