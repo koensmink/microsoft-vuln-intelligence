@@ -83,17 +83,3 @@ Frontend smoke tests:
 ```bash
 cd frontend && npm test
 ```
-
-## Future extension points
-
-The collector has a source abstraction so future enrichment sources such as EPSS, CISA KEV, RSS feeds, email notifications, webhooks, and multi-user authentication can be added without reworking CVRF ingestion. These features are not implemented in the MVP.
-
-## Running enrichment
-
-External intelligence is collected separately from the MSRC collector so failures do not block MSRC synchronization. The enrichment worker stores source-owned data in `cve_enrichment` records and is safe to rerun:
-
-```bash
-docker compose run --rm collector python enrich.py CVE-2026-0001
-```
-
-If no CVE IDs are passed, the worker enriches every CVE already present in the database. Supported sources are NVD, CISA Known Exploited Vulnerabilities, and FIRST EPSS. Optional environment variables include `NVD_API_BASE_URL`, `NVD_API_KEY`, `KEV_CATALOG_URL`, and `EPSS_API_BASE_URL`.
