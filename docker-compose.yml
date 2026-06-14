@@ -62,6 +62,7 @@ services:
     build: ./collector
     restart: unless-stopped
     environment:
+      NVD_API_KEY: ${NVD_API_KEY:-}
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/msvi
     depends_on:
       postgres:
