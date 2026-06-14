@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getJson } from "../../src/api";
+import { getJson } from "../src/api";
 
 type Cve = {
   id: number;

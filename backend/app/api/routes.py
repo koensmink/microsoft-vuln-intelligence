@@ -1,41 +1,107 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import extract, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
+
 from app.db.session import get_db
 from app.models import AffectedProduct, Cve, Product, Release
-from app.schemas import CveDetailOut, CveOut, ProductOut, ReleaseOut, SyncRequest
+from app.models.entities import CveProduct
+from app.schemas import CveDetailOut, CveOut, ProductOut, ReleaseOut, StatsOut, SyncRequest
+
 router = APIRouter(prefix="/api/v1")
+
+
 @router.get("/health")
-def health(): return {"status": "ok"}
+def health():
+    return {"status": "ok"}
+
+
 @router.get("/cves", response_model=list[CveOut])
-def list_cves(db: Session = Depends(get_db), severity: str | None = None, product: str | None = None, year: int | None = None, month: int | None = None, exploited: bool | None = None, publicly_disclosed: bool | None = None):
-    stmt = select(Cve).options(joinedload(Cve.release))
-    if severity: stmt = stmt.where(Cve.severity == severity)
-    if exploited is not None: stmt = stmt.where(Cve.exploited == exploited)
-    if publicly_disclosed is not None: stmt = stmt.where(Cve.publicly_disclosed == publicly_disclosed)
-    if year: stmt = stmt.join(Cve.release).where(extract("year", Release.release_date) == year)
-    if month: stmt = stmt.join(Cve.release).where(extract("month", Release.release_date) == month)
-    if product: stmt = stmt.join(Cve.affected_products).join(Product).where(Product.name.ilike(f"%{product}%"))
-    return db.scalars(stmt).unique().all()
+def list_cves(
+    db: Session = Depends(get_db),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    search: str | None = None,
+    severity: str | None = None,
+    product: str | None = None,
+    exploited: bool | None = None,
+    publicly_disclosed: bool | None = None,
+    release_name: str | None = None,
+):
+    stmt = select(Cve).options(joinedload(Cve.release), joinedload(Cve.product_links).joinedload(CveProduct.product))
+    if search:
+        stmt = stmt.outerjoin(Cve.product_links).outerjoin(Product).where(
+            or_(Cve.cve_id.ilike(f"%{search}%"), Cve.title.ilike(f"%{search}%"), Product.name.ilike(f"%{search}%"))
+        )
+    if severity:
+        stmt = stmt.join(Cve.product_links).where(CveProduct.severity == severity)
+    if product:
+        stmt = stmt.join(Cve.product_links).join(Product).where(or_(Product.name.ilike(f"%{product}%"), Product.product_id == product))
+    if exploited is not None:
+        stmt = stmt.join(Cve.product_links).where(CveProduct.exploited == exploited)
+    if publicly_disclosed is not None:
+        stmt = stmt.join(Cve.product_links).where(CveProduct.publicly_disclosed == publicly_disclosed)
+    if release_name:
+        stmt = stmt.join(Cve.release).where(Release.release_name == release_name)
+    return db.scalars(stmt.order_by(Cve.cve_id).limit(limit).offset(offset)).unique().all()
+
+
 @router.get("/cves/{cve_id}", response_model=CveDetailOut)
 def get_cve(cve_id: str, db: Session = Depends(get_db)):
-    cve = db.scalar(select(Cve).where(Cve.cve_id == cve_id).options(joinedload(Cve.release), joinedload(Cve.affected_products).joinedload(AffectedProduct.product), joinedload(Cve.remediations)))
-    if not cve: raise HTTPException(404, "CVE not found")
+    cve = db.scalar(
+        select(Cve)
+        .where(Cve.cve_id == cve_id)
+        .options(
+            joinedload(Cve.release),
+            joinedload(Cve.product_links).joinedload(CveProduct.product),
+            joinedload(Cve.remediations),
+        )
+    )
+    if not cve:
+        raise HTTPException(404, "CVE not found")
     return cve
+
+
 @router.get("/products", response_model=list[ProductOut])
-def list_products(db: Session = Depends(get_db)): return db.scalars(select(Product).order_by(Product.name)).all()
-@router.get("/products/{id}", response_model=ProductOut)
-def get_product(id: int, db: Session = Depends(get_db)):
-    product = db.get(Product, id)
-    if not product: raise HTTPException(404, "Product not found")
+def list_products(db: Session = Depends(get_db)):
+    return db.scalars(select(Product).order_by(Product.name)).all()
+
+
+@router.get("/products/{product_id}", response_model=ProductOut)
+def get_product(product_id: str, db: Session = Depends(get_db)):
+    product = db.scalar(select(Product).where(Product.product_id == product_id))
+    if not product:
+        raise HTTPException(404, "Product not found")
     return product
+
+
 @router.get("/releases", response_model=list[ReleaseOut])
-def list_releases(db: Session = Depends(get_db)): return db.scalars(select(Release).order_by(Release.release_name.desc())).all()
+def list_releases(db: Session = Depends(get_db)):
+    return db.scalars(select(Release).order_by(Release.release_name.desc())).all()
+
+
 @router.get("/releases/{release_name}", response_model=ReleaseOut)
 def get_release(release_name: str, db: Session = Depends(get_db)):
     release = db.scalar(select(Release).where(Release.release_name == release_name))
-    if not release: raise HTTPException(404, "Release not found")
+    if not release:
+        raise HTTPException(404, "Release not found")
     return release
+
+
+@router.get("/stats", response_model=StatsOut)
+def stats(db: Session = Depends(get_db)):
+    latest = db.scalar(select(Release.release_name).order_by(Release.release_name.desc()).limit(1))
+    counts = dict(db.execute(select(CveProduct.severity, func.count()).group_by(CveProduct.severity)).all())
+    return {
+        "total_cves": db.scalar(select(func.count(Cve.id))) or 0,
+        "total_products": db.scalar(select(func.count(Product.id))) or 0,
+        "latest_release": latest,
+        "count_by_severity": {str(k): v for k, v in counts.items() if k},
+        "exploited_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.exploited.is_(True))) or 0,
+        "publicly_disclosed_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.publicly_disclosed.is_(True))) or 0,
+    }
+
+
 @router.post("/admin/sync")
 def trigger_sync(payload: SyncRequest):
-    return {"status": "accepted", "release": payload.release, "message": "Run `python sync.py` in collector for full import."}
+    release = payload.release_name or payload.release
+    return {"status": "accepted", "release_name": release, "message": "Run collector sync for the requested release."}
