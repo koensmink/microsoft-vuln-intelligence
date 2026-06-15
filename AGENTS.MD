@@ -1,61 +1,18 @@
-Extend the dashboard with stronger vulnerability intelligence KPIs and charts.
+Fix dashboard crash in frontend/app/page.tsx.
 
-Current state:
-- Dashboard already shows Total CVEs, Total CISA KEV vulnerabilities, Average FIRST EPSS score and Top 10 CVEs by EPSS.
-- Backend exposes CVE data, EPSS, KEV and partial NVD enrichment.
-- Do not refactor collectors, enrichment worker, scheduler, database schema or Docker Compose unless strictly required for frontend/API support.
+Current issue:
+Frontend crashes with:
+TypeError: Cannot read properties of undefined (reading 'length')
 
-Required dashboard additions:
+Cause:
+page.tsx uses stats.kev_cves.length, but GET /api/v1/stats does not return kev_cves.
 
-1. Add KPI cards:
-- Critical CVEs
-- Publicly disclosed CVEs
-- Highest EPSS score
-- CVEs with EPSS >= 1%
-- CVEs with EPSS >= 10%
-- NVD enriched CVEs
-- CVEs with CVSS >= 9
-
-2. Add charts using existing frontend charting approach/library:
-- CVEs by severity
-- CVEs by release
-- CVEs by impact
-- KEV vs non-KEV distribution
-- CVSS score distribution
-- Top 20 CVEs by EPSS score as horizontal bar chart
-
-3. Add KEV focus table:
-- Show all KEV CVEs
-- Columns:
-  - CVE
-  - Title
-  - Product
-  - EPSS score
-  - CVSS score
-  - Severity
-  - Required action
-  - Due date
-- CVE must link to detail page.
-
-4. Add risk prioritization summary:
-- Immediate Action count:
-  KEV=true OR exploited=true OR cvss_score >= 9 OR epss_score >= 0.5
-- High Priority count:
-  severity=Critical OR cvss_score >= 7 OR epss_score >= 0.2
-- Routine count:
-  all remaining CVEs
-
-5. Validate Average EPSS calculation:
-- Average EPSS must be calculated only over CVEs with non-null EPSS.
-- Display as percentage with two decimals.
-- Example: epss_score=0.001 must display as 0.10%.
-
-6. Frontend resilience:
-- All charts must handle missing/null fields.
-- Do not break if NVD data is incomplete.
-- Show empty states where data is missing.
-
-Validation:
-- npm run build must pass.
-- docker compose build frontend must pass.
-- Dashboard must render with current dataset.
+Required:
+1. In frontend/app/page.tsx, default missing arrays to []:
+   - const kevCves = stats.kev_cves ?? []
+   - const topEpssCves = stats.top_epss_cves ?? []
+2. Replace all stats.kev_cves usages with kevCves.
+3. Replace all stats.top_epss_cves usages with topEpssCves.
+4. Add empty state when kevCves.length === 0.
+5. Do not change collector/enrichment/scheduler.
+6. npm run build must pass.
