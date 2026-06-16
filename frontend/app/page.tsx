@@ -1,54 +1,55 @@
 import Link from "next/link";
 import { getJson } from "../src/api";
 
+type CountBucket = { label: string | null; count: number | null };
 type KevCve = { cve_id: string; title: string | null; product: string | null; epss_score: number | null; cvss_score: number | null; severity: string | null; required_action: string | null; due_date: string | null };
-
-type TopEpssCve = { cve_id: string; title: string | null; epss_score: number; epss_percentile: number | null };
+type TopEpssCve = { cve_id: string; title: string | null; epss_score: number | null; epss_percentile: number | null };
 
 type Stats = {
-  total_cves: number;
-  total_products: number;
-  latest_release: string | null;
-  exploited_count: number;
-  publicly_disclosed_count: number;
-  total_kev_vulnerabilities: number;
-  average_epss_score: number | null;
-  top_epss_cves?: TopEpssCve[];
-  kev_cves?: KevCve[];
+  total_cves?: number | null; total_products?: number | null; latest_release?: string | null; exploited_count?: number | null; publicly_disclosed_count?: number | null;
+  total_kev_vulnerabilities?: number | null; average_epss_score?: number | null; highest_epss_score?: number | null; epss_at_least_10_percent?: number | null;
+  nvd_enriched_cves?: number | null; critical_cves?: number | null; immediate_action_count?: number | null; high_priority_count?: number | null; routine_count?: number | null;
+  cves_by_severity?: CountBucket[] | null; cves_by_release?: CountBucket[] | null; cves_by_impact?: CountBucket[] | null; kev_distribution?: CountBucket[] | null; cvss_score_distribution?: CountBucket[] | null;
+  top_epss_cves?: TopEpssCve[] | null; kev_cves?: KevCve[] | null;
 };
 
-function pct(value: number | null) {
-  return value == null ? "-" : `${(value * 100).toFixed(1)}%`;
+const emptyStats: Stats = { total_cves: 0, total_products: 0, latest_release: null, exploited_count: 0, publicly_disclosed_count: 0, total_kev_vulnerabilities: 0, average_epss_score: null, highest_epss_score: null, epss_at_least_10_percent: 0, nvd_enriched_cves: 0, critical_cves: 0, immediate_action_count: 0, high_priority_count: 0, routine_count: 0, cves_by_severity: [], cves_by_release: [], cves_by_impact: [], kev_distribution: [], cvss_score_distribution: [], top_epss_cves: [], kev_cves: [] };
+const severityColors: Record<string, string> = { Critical: "#fb7185", Important: "#fb923c", High: "#fb923c", Moderate: "#facc15", Low: "#22c55e", Unknown: "#64748b" };
+
+function safeNumber(value: number | null | undefined) { return typeof value === "number" && Number.isFinite(value) ? value : 0; }
+function formatCount(value: number | null | undefined) { return safeNumber(value).toLocaleString("en-US"); }
+function formatPct(value: number | null | undefined) { return typeof value === "number" && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—"; }
+function formatCvss(value: number | null | undefined) { return typeof value === "number" && Number.isFinite(value) ? value.toFixed(1) : "—"; }
+function normalizeBuckets(buckets: CountBucket[] | null | undefined) { return (buckets ?? []).map((bucket) => ({ label: bucket.label ?? "Unknown", count: safeNumber(bucket.count) })); }
+function averageCvssFromBuckets(buckets: CountBucket[] | null | undefined) {
+  const midpoints: Record<string, number> = { "0.0-3.9": 2, "4.0-6.9": 5.45, "7.0-8.9": 7.95, "9.0-10.0": 9.5 };
+  let total = 0; let weighted = 0;
+  for (const bucket of normalizeBuckets(buckets)) { const midpoint = midpoints[bucket.label]; if (midpoint === undefined) continue; total += bucket.count; weighted += bucket.count * midpoint; }
+  return total > 0 ? weighted / total : null;
 }
 
-export default async function DashboardPage() {
-  const stats = await getJson<Stats>("/stats", { total_cves: 0, total_products: 0, latest_release: null, exploited_count: 0, publicly_disclosed_count: 0, total_kev_vulnerabilities: 0, average_epss_score: null, top_epss_cves: [], kev_cves: [] });
-  const kevCves = stats.kev_cves ?? [];
-  const topEpssCves = stats.top_epss_cves ?? [];
+function KpiCard({ label, value, helper, tone = "text-white" }: { label: string; value: string; helper: string; tone?: string }) {
+  return <article className="card bg-gradient-to-br from-slate-900 to-slate-950"><p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">{label}</p><p className={`mt-3 text-3xl font-black ${tone}`}>{value}</p><p className="mt-2 text-sm text-slate-400">{helper}</p></article>;
+}
 
-  return (
-    <section className="space-y-6">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="card"><p className="text-slate-400">Total CVEs</p><p className="text-3xl font-bold">{stats.total_cves}</p></div>
-        <div className="card"><p className="text-slate-400">Total CISA KEV vulnerabilities</p><p className="text-3xl font-bold text-red-300">{stats.total_kev_vulnerabilities}</p></div>
-        <div className="card"><p className="text-slate-400">Average FIRST EPSS score</p><p className="text-3xl font-bold">{pct(stats.average_epss_score)}</p></div>
-      </div>
-      <section className="card">
-        <h2 className="text-xl font-semibold">Top 10 CVEs by FIRST EPSS score</h2>
-        <table className="mt-3 w-full text-left text-sm"><thead><tr><th>CVE</th><th>Title</th><th>EPSS score</th><th>EPSS percentile</th></tr></thead><tbody>{topEpssCves.map((cve) => <tr key={cve.cve_id} className="border-t border-slate-800"><td><Link className="text-blue-400 hover:underline" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td>{cve.title ?? "Untitled"}</td><td>{pct(cve.epss_score)}</td><td>{pct(cve.epss_percentile)}</td></tr>)}</tbody></table>
-      </section>
-      <section className="card">
-        <h2 className="text-xl font-semibold">CISA KEV CVEs</h2>
-        {kevCves.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-400">No CISA KEV CVEs are available.</p>
-        ) : (
-          <table className="mt-3 w-full text-left text-sm">
-            <thead><tr><th>CVE</th><th>Product</th><th>Severity</th><th>EPSS</th><th>Required action</th><th>Due date</th></tr></thead>
-            <tbody>{kevCves.map((cve) => <tr key={cve.cve_id} className="border-t border-slate-800"><td><Link className="text-blue-400 hover:underline" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td>{cve.product ?? "Unknown"}</td><td>{cve.severity ?? "Unknown"}</td><td>{pct(cve.epss_score)}</td><td>{cve.required_action ?? "-"}</td><td>{cve.due_date ?? "-"}</td></tr>)}</tbody>
-          </table>
-        )}
-      </section>
-    </section>
-  );
+function DonutChart({ title, buckets }: { title: string; buckets: CountBucket[] | null | undefined }) {
+  const rows = normalizeBuckets(buckets); const total = rows.reduce((sum, row) => sum + row.count, 0); let cursor = 0;
+  const gradient = total > 0 ? rows.map((row, index) => { const start = cursor; const size = (row.count / total) * 100; cursor += size; const color = severityColors[row.label] ?? ["#38bdf8", "#a78bfa", "#f472b6", "#2dd4bf"][index % 4]; return `${color} ${start}% ${cursor}%`; }).join(", ") : "#334155 0% 100%";
+  return <section className="card"><h2 className="text-lg font-semibold">{title}</h2><div className="mt-5 flex flex-col items-center gap-5 sm:flex-row"><div className="grid h-40 w-40 place-items-center rounded-full" style={{ background: `conic-gradient(${gradient})` }}><div className="grid h-24 w-24 place-items-center rounded-full bg-slate-950 text-center"><span className="text-2xl font-bold">{formatCount(total)}</span></div></div><div className="w-full space-y-2">{rows.length === 0 || total === 0 ? <p className="empty-state">No chart data available.</p> : rows.map((row) => <div key={row.label} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-slate-300">{row.label}</span><span className="font-semibold">{formatCount(row.count)}</span></div>)}</div></div></section>;
+}
+
+function BarChart({ title, buckets, horizontal = false }: { title: string; buckets: CountBucket[] | null | undefined; horizontal?: boolean }) {
+  const rows = normalizeBuckets(buckets); const max = Math.max(...rows.map((row) => row.count), 0);
+  return <section className="card"><h2 className="text-lg font-semibold">{title}</h2><div className="mt-5 space-y-3">{rows.length === 0 || max === 0 ? <p className="empty-state">No chart data available.</p> : rows.slice(0, horizontal ? 20 : 10).map((row) => <div key={row.label} className="grid gap-2 text-sm sm:grid-cols-[9rem_1fr_4rem] sm:items-center"><span className="truncate text-slate-300">{row.label}</span><div className="h-3 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max((row.count / max) * 100, 3)}%` }} /></div><span className="font-semibold text-slate-100 sm:text-right">{formatCount(row.count)}</span></div>)}</div></section>;
+}
+
+function ActionRow({ label, value, tone }: { label: string; value: number | null | undefined; tone: string }) { return <div className="flex items-center justify-between rounded-lg bg-slate-950/70 px-3 py-2"><span className="text-slate-300">{label}</span><span className={`text-xl font-bold ${tone}`}>{formatCount(value)}</span></div>; }
+function Coverage({ label, value, helper }: { label: string; value: number | null; helper: string }) { const pct = value == null ? 0 : Math.max(0, Math.min(value * 100, 100)); return <div><div className="flex justify-between text-sm"><span className="text-slate-300">{label}</span><span className="font-semibold">{value == null ? "—" : `${pct.toFixed(1)}%`}</span></div><div className="mt-2 h-2 rounded-full bg-slate-800"><div className="h-full rounded-full bg-violet-400" style={{ width: `${pct}%` }} /></div><p className="mt-1 text-xs text-slate-500">{helper}</p></div>; }
+function RiskPanel({ stats }: { stats: Stats }) { const total = safeNumber(stats.total_cves); const epssCoverage = total > 0 ? safeNumber(stats.epss_at_least_10_percent) / total : null; const nvdCoverage = total > 0 ? safeNumber(stats.nvd_enriched_cves) / total : null; const kevCoverage = total > 0 ? safeNumber(stats.total_kev_vulnerabilities) / total : null; return <aside className="space-y-4"><section className="card"><h2 className="text-lg font-semibold">Immediate Actions</h2><div className="mt-4 space-y-3"><ActionRow label="Immediate" value={stats.immediate_action_count} tone="text-rose-300" /><ActionRow label="High priority" value={stats.high_priority_count} tone="text-orange-300" /><ActionRow label="Routine" value={stats.routine_count} tone="text-emerald-300" /></div></section><section className="card"><h2 className="text-lg font-semibold">Enrichment Coverage</h2><div className="mt-4 space-y-4"><Coverage label="EPSS >= 10%" value={epssCoverage} helper={`${formatCount(stats.epss_at_least_10_percent)} high-probability CVEs`} /><Coverage label="NVD coverage" value={nvdCoverage} helper={`${formatCount(stats.nvd_enriched_cves)} enriched CVEs`} /><Coverage label="KEV coverage" value={kevCoverage} helper={`${formatCount(stats.total_kev_vulnerabilities)} known exploited`} /></div></section></aside>; }
+function TopEpssTable({ cves }: { cves: TopEpssCve[] | null | undefined }) { const rows = cves ?? []; return <section className="card"><h2 className="text-lg font-semibold">Top CVEs by EPSS</h2>{rows.length === 0 ? <p className="empty-state mt-4">No EPSS-ranked CVEs available.</p> : <div className="mt-4 overflow-x-auto"><table className="data-table"><thead><tr><th>CVE</th><th>Title</th><th>EPSS score</th><th>Percentile</th></tr></thead><tbody>{rows.map((cve) => <tr key={cve.cve_id}><td><Link className="link" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td>{cve.title ?? "Untitled"}</td><td>{formatPct(cve.epss_score)}</td><td>{formatPct(cve.epss_percentile)}</td></tr>)}</tbody></table></div>}</section>; }
+function KevTable({ cves }: { cves: KevCve[] | null | undefined }) { const rows = cves ?? []; return <section className="card"><h2 className="text-lg font-semibold">Known Exploited Vulnerabilities</h2>{rows.length === 0 ? <p className="empty-state mt-4">No CISA KEV CVEs are available.</p> : <div className="mt-4 overflow-x-auto"><table className="data-table"><thead><tr><th>CVE</th><th>Product</th><th>Severity</th><th>EPSS</th><th>CVSS</th><th>Required action</th><th>Due date</th></tr></thead><tbody>{rows.map((cve) => <tr key={cve.cve_id}><td><Link className="link" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td>{cve.product ?? "Unknown"}</td><td>{cve.severity ?? "Unknown"}</td><td>{formatPct(cve.epss_score)}</td><td>{formatCvss(cve.cvss_score)}</td><td>{cve.required_action ?? "—"}</td><td>{cve.due_date ?? "—"}</td></tr>)}</tbody></table></div>}</section>; }
+
+export default async function DashboardPage() {
+  const stats = await getJson<Stats>("/stats", emptyStats); const averageCvss = averageCvssFromBuckets(stats.cvss_score_distribution);
+  return <div className="space-y-6"><section className="rounded-3xl border border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.22),transparent_35%),linear-gradient(135deg,rgba(15,23,42,0.95),rgba(2,6,23,0.95))] p-6 shadow-2xl shadow-cyan-950/20"><p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">Microsoft Security Response Center</p><div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-4xl font-black tracking-tight">Vulnerability Intelligence Dashboard</h1><p className="mt-3 max-w-3xl text-slate-300">Dark operational view of Microsoft CVEs, enrichment coverage, EPSS probability, CVSS distribution, and CISA KEV exposure.</p></div><div className="rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">Latest release <span className="block text-xl font-bold text-white">{stats.latest_release ?? "Unknown"}</span></div></div></section><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5"><KpiCard label="Total CVEs" value={formatCount(stats.total_cves)} helper="Tracked vulnerabilities" /><KpiCard label="Critical CVEs" value={formatCount(stats.critical_cves)} helper="Distinct critical CVEs" tone="text-rose-300" /><KpiCard label="High EPSS >= 10%" value={formatCount(stats.epss_at_least_10_percent)} helper={`Highest ${formatPct(stats.highest_epss_score)}`} tone="text-orange-300" /><KpiCard label="KEV Catalog" value={formatCount(stats.total_kev_vulnerabilities)} helper="Known exploited" tone="text-fuchsia-300" /><KpiCard label="Average CVSS" value={formatCvss(averageCvss)} helper="Estimated from CVSS buckets" tone="text-cyan-300" /></section><div className="grid gap-6 xl:grid-cols-[1fr_22rem]"><main className="space-y-6"><div className="grid gap-6 lg:grid-cols-2"><DonutChart title="CVEs by severity" buckets={stats.cves_by_severity} /><BarChart title="CVSS score distribution" buckets={stats.cvss_score_distribution} /><DonutChart title="CVEs by impact" buckets={stats.cves_by_impact} /><BarChart title="CVEs by release" buckets={stats.cves_by_release} horizontal /></div><BarChart title="Top 10/20 CVEs by EPSS" buckets={(stats.top_epss_cves ?? []).map((cve) => ({ label: cve.cve_id, count: Math.round(safeNumber(cve.epss_score) * 1000) }))} horizontal /><TopEpssTable cves={stats.top_epss_cves} /><KevTable cves={stats.kev_cves} /></main><RiskPanel stats={stats} /></div></div>;
 }
