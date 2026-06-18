@@ -1,19 +1,50 @@
 import Link from "next/link";
+import { getJson } from "../src/api";
 import "./globals.css";
 
 export const metadata = { title: "Microsoft Vulnerability Intelligence" };
+
+type ShellStats = {
+  total_cves?: number | null;
+  nvd_enriched_cves?: number | null;
+  epss_enriched_cves?: number | null;
+  total_kev_vulnerabilities?: number | null;
+};
 
 const navItems = [
   { href: "/", label: "Overview", icon: "◇" },
   { href: "/cves", label: "CVE Explorer", icon: "⌕" },
   { href: "/releases", label: "Releases", icon: "▣" },
-  { href: "/cves?kev=true", label: "KEV Catalog", icon: "✦" },
-  { href: "/cves?min_epss=0.10", label: "EPSS Insights", icon: "⌁" },
-  { href: "/", label: "Reports", icon: "▤" },
-  { href: "/", label: "Settings", icon: "⚙" },
+  { href: "/kev", label: "KEV Catalog", icon: "✦" },
+  { href: "/cves?epss=high", label: "EPSS Insights", icon: "⌁" },
+  { href: "/reports", label: "Reports", icon: "▤" },
+  { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+function safeNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function formatCount(value: number | null | undefined) {
+  return safeNumber(value).toLocaleString("en-US");
+}
+
+function SourceStatus({ label, count }: { label: string; count: number | null | undefined }) {
+  const active = safeNumber(count) > 0;
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+      <span className="truncate text-slate-300">{label}</span>
+      <span className="flex items-center gap-2 text-slate-500">
+        <span className={`h-2.5 w-2.5 rounded-full ${active ? "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" : "bg-slate-600"}`} />
+        <span className="tabular-nums">{formatCount(count)}</span>
+      </span>
+    </div>
+  );
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const stats = await getJson<ShellStats>("/stats", {});
+
   return (
     <html lang="en" className="dark">
       <body>
@@ -35,8 +66,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </nav>
             <div className="absolute bottom-6 left-5 right-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-xs text-slate-400">
-              <p className="font-semibold uppercase tracking-[0.2em] text-slate-500">Secure feed</p>
-              <p className="mt-2">MSRC, NVD, FIRST EPSS, and CISA KEV signals.</p>
+              <p className="font-semibold uppercase tracking-[0.2em] text-slate-500">Data Sources</p>
+              <div className="mt-3 space-y-2">
+                <SourceStatus label="Microsoft MSRC" count={stats.total_cves} />
+                <SourceStatus label="NVD" count={stats.nvd_enriched_cves} />
+                <SourceStatus label="EPSS" count={stats.epss_enriched_cves} />
+                <SourceStatus label="CISA KEV" count={stats.total_kev_vulnerabilities} />
+              </div>
             </div>
           </aside>
           <main className="min-w-0 px-4 py-4 sm:px-6 lg:px-8 xl:ml-72">{children}</main>

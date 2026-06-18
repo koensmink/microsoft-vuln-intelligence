@@ -39,7 +39,7 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
   const qs = new URLSearchParams();
   const severity = params.severity;
   const release = params.release ?? params.release_name;
-  const minEpss = params.min_epss ?? params.min_epss_score;
+  const minEpss = params.epss === "high" ? "0.10" : params.min_epss ?? params.min_epss_score;
   const minCvss = params.min_cvss ?? params.min_cvss_score;
   const kev = params.kev ?? params.kev_only;
   for (const key of ["search", "severity", "exploited", "publicly_disclosed"]) {
@@ -50,7 +50,7 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
   if (minCvss) qs.set("min_cvss_score", minCvss);
   if (kev === "true") qs.set("kev_only", "true");
   const apiCves = await getJson<Cve[]>(`/cves${qs.size ? `?${qs}` : ""}`, []);
-  const cves = (apiCves ?? []).filter((cve) => {
+  const filteredCves = (apiCves ?? []).filter((cve) => {
     if (severity && cve.severity !== severity) return false;
     if (params.impact && cve.impact !== params.impact) return false;
     if (release && cve.release?.release_name !== release) return false;
@@ -61,8 +61,10 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
     if (asBool(params.publicly_disclosed) !== undefined && cve.publicly_disclosed !== asBool(params.publicly_disclosed)) return false;
     if (asBool(params.exploited) !== undefined && cve.exploited !== asBool(params.exploited)) return false;
     if (params.priority && cve.priority !== params.priority) return false;
+    if (params.nvd === "missing" && cve.nvd_cvss_score != null) return false;
     return true;
   });
+  const cves = params.sort === "cvss" ? [...filteredCves].sort((a, b) => (b.nvd_cvss_score ?? b.cvss_score ?? -1) - (a.nvd_cvss_score ?? a.cvss_score ?? -1)) : filteredCves;
 
   return (
     <section className="space-y-6">
