@@ -1,38 +1,12 @@
 import Link from "next/link";
 import { getJson } from "../../src/api";
 
-type Cve = {
-  id: number;
-  cve_id: string;
-  title: string | null;
-  severity: string | null;
-  cvss_score: number | null;
-  epss_score: number | null;
-  epss_percentile: number | null;
-  kev_known_exploited: boolean;
-  nvd_cvss_score: number | null;
-  exploited: boolean;
-  publicly_disclosed: boolean;
-  affected_product_count: number | null;
-  priority: string | null;
-  impact: string | null;
-  release: { release_name: string } | null;
-};
-
-function pct(value: number | null) {
-  return value == null ? "-" : `${(value * 100).toFixed(1)}%`;
-}
+type Cve = { id: number; cve_id: string; title: string | null; severity: string | null; cvss_score: number | null; epss_score: number | null; epss_percentile: number | null; kev_known_exploited: boolean; nvd_cvss_score: number | null; exploited: boolean; publicly_disclosed: boolean; affected_product_count: number | null; priority: string | null; impact: string | null; release: { release_name: string } | null };
+function pct(value: number | null | undefined) { return value == null ? "—" : `${(value * 100).toFixed(1)}%`; }
+function score(value: number | null | undefined) { return value == null ? "—" : value.toFixed(1); }
 function asBool(value: string | undefined) { return value === "true" ? true : value === "false" ? false : undefined; }
-function inCvssBucket(score: number | null, bucket: string | undefined) {
-  if (!bucket || score == null) return true;
-  const numbers = bucket.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
-  if (numbers.length >= 2) return score >= numbers[0] && score <= numbers[1];
-  if (/critical/i.test(bucket)) return score >= 9;
-  if (/high/i.test(bucket)) return score >= 7 && score < 9;
-  if (/medium|moderate/i.test(bucket)) return score >= 4 && score < 7;
-  if (/low/i.test(bucket)) return score > 0 && score < 4;
-  return true;
-}
+function inCvssBucket(score: number | null, bucket: string | undefined) { if (!bucket || score == null) return true; const numbers = bucket.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? []; if (numbers.length >= 2) return score >= numbers[0] && score <= numbers[1]; if (/critical/i.test(bucket)) return score >= 9; if (/high/i.test(bucket)) return score >= 7 && score < 9; if (/medium|moderate/i.test(bucket)) return score >= 4 && score < 7; if (/low/i.test(bucket)) return score > 0 && score < 4; return true; }
+function Chip({ label, value }: { label: string; value: string }) { return <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-100"><span className="text-slate-400">{label}:</span> {value}</span>; }
 
 export default async function CvesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const params = await searchParams;
@@ -42,9 +16,7 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
   const minEpss = params.epss === "high" ? "0.10" : params.min_epss ?? params.min_epss_score;
   const minCvss = params.min_cvss ?? params.min_cvss_score;
   const kev = params.kev ?? params.kev_only;
-  for (const key of ["search", "severity", "exploited", "publicly_disclosed"]) {
-    if (params[key]) qs.set(key, params[key]!);
-  }
+  for (const key of ["search", "severity", "exploited", "publicly_disclosed"]) if (params[key]) qs.set(key, params[key]!);
   if (release) qs.set("release_name", release);
   if (minEpss) qs.set("min_epss_score", minEpss);
   if (minCvss) qs.set("min_cvss_score", minCvss);
@@ -65,30 +37,10 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
     return true;
   });
   const cves = params.sort === "cvss" ? [...filteredCves].sort((a, b) => (b.nvd_cvss_score ?? b.cvss_score ?? -1) - (a.nvd_cvss_score ?? a.cvss_score ?? -1)) : filteredCves;
+  const activeFilters = [["Search", params.search], ["Severity", severity], ["Release", release], ["Exploited", params.exploited], ["Public", params.publicly_disclosed], ["KEV", kev === "true" ? "CISA KEV only" : undefined], ["Min EPSS", minEpss], ["Min CVSS", minCvss], ["Impact", params.impact], ["CVSS bucket", params.cvss_bucket], ["Priority", params.priority], ["NVD", params.nvd], ["Sort", params.sort]].filter(([, value]) => Boolean(value));
 
-  return (
-    <section className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Vulnerabilities</h1>
-        <p className="text-slate-400">MSRC CVRF vulnerabilities enriched with FIRST EPSS, CISA KEV, and NVD data when available.</p>
-      </div>
-      <form className="grid gap-3 rounded border border-slate-800 p-4 md:grid-cols-4">
-        <input className="rounded bg-slate-900 p-2" name="search" placeholder="Search CVE, title, product" defaultValue={params.search} />
-        <select className="rounded bg-slate-900 p-2" name="severity" defaultValue={severity ?? ""}><option value="">Any severity</option><option>Critical</option><option>Important</option><option>Moderate</option><option>Low</option></select>
-        <select className="rounded bg-slate-900 p-2" name="exploited" defaultValue={params.exploited ?? ""}><option value="">MSRC exploited?</option><option value="true">Yes</option><option value="false">No</option></select>
-        <select className="rounded bg-slate-900 p-2" name="publicly_disclosed" defaultValue={params.publicly_disclosed ?? ""}><option value="">Publicly disclosed?</option><option value="true">Yes</option><option value="false">No</option></select>
-        <input className="rounded bg-slate-900 p-2" name="release" placeholder="Release" defaultValue={release} />
-        <label className="flex items-center gap-2 rounded bg-slate-900 p-2"><input type="checkbox" name="kev" value="true" defaultChecked={kev === "true"} /> CISA KEV only</label>
-        <input className="rounded bg-slate-900 p-2" name="min_epss" type="number" min="0" max="1" step="0.01" placeholder="Min FIRST EPSS" defaultValue={minEpss} />
-        <input className="rounded bg-slate-900 p-2" name="min_cvss" type="number" min="0" max="10" step="0.1" placeholder="Min NVD CVSS" defaultValue={minCvss} />
-        <button className="rounded bg-blue-600 p-2 font-semibold" type="submit">Apply filters</button>
-      </form>
-      <div className="overflow-x-auto rounded border border-slate-800">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-900 text-slate-300"><tr><th className="p-3">CVE</th><th className="p-3">Title</th><th className="p-3">Release</th><th className="p-3">Products</th><th className="p-3">Severity</th><th className="p-3">NVD CVSS</th><th className="p-3">FIRST EPSS</th><th className="p-3">EPSS percentile</th><th className="p-3">CISA KEV</th></tr></thead>
-          <tbody>{cves.length === 0 ? <tr><td className="p-6 text-center text-slate-400" colSpan={9}>No CVEs match the selected filters.</td></tr> : cves.map((cve) => <tr key={cve.cve_id} className="border-t border-slate-800"><td className="p-3"><Link className="text-blue-400 hover:underline" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td className="p-3">{cve.title ?? "Untitled"}</td><td className="p-3">{cve.release?.release_name ?? "-"}</td><td className="p-3">{cve.affected_product_count ?? "-"}</td><td className="p-3">{cve.severity ?? "Unknown"}</td><td className="p-3">{cve.nvd_cvss_score ?? "-"}</td><td className="p-3">{pct(cve.epss_score)}</td><td className="p-3">{pct(cve.epss_percentile)}</td><td className="p-3">{cve.kev_known_exploited ? <span className="rounded bg-red-600 px-2 py-1 text-xs font-bold text-white">CISA KEV</span> : "-"}</td></tr>)}</tbody>
-        </table>
-      </div>
-    </section>
-  );
+  return <section className="space-y-6"><div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6"><p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">CVE Explorer</p><div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-3xl font-black tracking-tight">Vulnerabilities</h1><p className="mt-2 max-w-3xl text-slate-400">Browse MSRC CVRF vulnerabilities enriched with FIRST EPSS, CISA KEV, and NVD data when available.</p></div><div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 text-sm"><span className="text-slate-400">Showing</span> <span className="font-bold text-cyan-200">{cves.length.toLocaleString("en-US")}</span> <span className="text-slate-400">of {(apiCves ?? []).length.toLocaleString("en-US")}</span></div></div></div>
+    <form className="card grid gap-3 md:grid-cols-4"><input className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="search" placeholder="Search CVE, title, product" defaultValue={params.search} /><select className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="severity" defaultValue={severity ?? ""}><option value="">Any severity</option><option>Critical</option><option>Important</option><option>Moderate</option><option>Low</option></select><select className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="exploited" defaultValue={params.exploited ?? ""}><option value="">MSRC exploited?</option><option value="true">Yes</option><option value="false">No</option></select><select className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="publicly_disclosed" defaultValue={params.publicly_disclosed ?? ""}><option value="">Publicly disclosed?</option><option value="true">Yes</option><option value="false">No</option></select><input className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="release" placeholder="Release" defaultValue={release} /><label className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3"><input type="checkbox" name="kev" value="true" defaultChecked={kev === "true"} /> CISA KEV only</label><input className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="min_epss" type="number" min="0" max="1" step="0.01" placeholder="Min FIRST EPSS" defaultValue={minEpss} /><input className="rounded-xl border border-slate-800 bg-slate-950 p-3" name="min_cvss" type="number" min="0" max="10" step="0.1" placeholder="Min CVSS" defaultValue={minCvss} /><button className="rounded-xl bg-cyan-500 p-3 font-bold text-slate-950 hover:bg-cyan-400" type="submit">Apply filters</button><Link className="rounded-xl border border-slate-700 p-3 text-center font-semibold text-slate-300 hover:bg-slate-800" href="/cves">Clear filters</Link></form>
+    <div className="flex flex-wrap gap-2">{activeFilters.length === 0 ? <span className="text-sm text-slate-500">No active filters. Use the controls above or dashboard drill-down links to refine results.</span> : activeFilters.map(([label, value]) => <Chip key={`${label}-${value}`} label={label ?? "Filter"} value={value ?? ""} />)}</div>
+    <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/70"><table className="data-table min-w-[980px]"><thead><tr>{["CVE ↕", "Title", "Release ↕", "Products", "Severity ↕", "CVSS ↕", "EPSS ↕", "Percentile", "Signals"].map((h) => <th className="px-4 pt-4" key={h}>{h}</th>)}</tr></thead><tbody>{cves.length === 0 ? <tr><td className="p-8 text-center text-slate-400" colSpan={9}>No CVEs match the selected filters. Clear filters or broaden the query.</td></tr> : cves.map((cve) => <tr key={cve.cve_id} className="hover:bg-slate-800/50"><td className="px-4"><Link className="link" href={`/cves/${cve.cve_id}`}>{cve.cve_id}</Link></td><td className="px-4"><span className="line-clamp-2">{cve.title ?? "Untitled"}</span></td><td className="px-4">{cve.release?.release_name ?? "—"}</td><td className="px-4">{cve.affected_product_count ?? "—"}</td><td className="px-4"><span className="rounded-full bg-slate-800 px-2 py-1 text-xs font-semibold">{cve.severity ?? "Unknown"}</span></td><td className="px-4 tabular-nums">{score(cve.nvd_cvss_score ?? cve.cvss_score)}</td><td className="px-4 tabular-nums">{pct(cve.epss_score)}</td><td className="px-4 tabular-nums">{pct(cve.epss_percentile)}</td><td className="px-4">{cve.kev_known_exploited ? <span className="rounded bg-red-600 px-2 py-1 text-xs font-bold text-white">CISA KEV</span> : cve.exploited ? <span className="rounded bg-orange-500/20 px-2 py-1 text-xs font-bold text-orange-200">MSRC exploited</span> : "—"}</td></tr>)}</tbody></table></div></section>;
 }
