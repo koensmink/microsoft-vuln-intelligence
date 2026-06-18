@@ -124,21 +124,12 @@ def get_release(release_name: str, db: Session = Depends(get_db)):
 @router.get("/stats", response_model=StatsOut)
 def stats(db: Session = Depends(get_db)):
     latest = db.scalar(select(Release.release_name).order_by(Release.release_name.desc()).limit(1))
-    counts = dict(db.execute(select(CveProduct.severity, func.count()).group_by(CveProduct.severity)).all())
-    severity_counts = dict(
-        db.execute(select(CveProduct.severity, func.count(func.distinct(CveProduct.cve_id))).group_by(CveProduct.severity)).all()
-    )
     release_counts = db.execute(
         select(func.coalesce(Release.release_name, "Unknown"), func.count(Cve.id))
         .select_from(Cve)
         .outerjoin(Release)
         .group_by(Release.release_name)
         .order_by(func.count(Cve.id).desc(), Release.release_name)
-    ).all()
-    impact_counts = db.execute(
-        select(func.coalesce(CveProduct.impact, "Unknown"), func.count(func.distinct(CveProduct.cve_id)))
-        .group_by(CveProduct.impact)
-        .order_by(func.count(func.distinct(CveProduct.cve_id)).desc())
     ).all()
     total_cves = db.scalar(select(func.count(Cve.id))) or 0
     total_kev = db.scalar(
@@ -171,18 +162,32 @@ def stats(db: Session = Depends(get_db)):
         {"label": "Unknown", "count": 0},
     ]
     immediate_action_count = high_priority_count = routine_count = 0
+    cvss_scores: list[float] = []
+    known_impact_cves: set[int] = set()
+    severity_counts: dict[str, int] = {}
+    impact_counts: dict[str, int] = {}
     for cve in cves:
-        cvss_score = cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score
+        severity = cve.severity or "Unknown"
+        impact = cve.impact or "Unknown"
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        impact_counts[impact] = impact_counts.get(impact, 0) + 1
+        cvss_score = cve.cvss_score if cve.cvss_score is not None else cve.nvd_cvss_score
         epss_score = cve.epss_score
+        if impact != "Unknown":
+            known_impact_cves.add(cve.id)
         if cvss_score is None:
             score_buckets[4]["count"] += 1
         elif cvss_score >= 9:
+            cvss_scores.append(cvss_score)
             score_buckets[3]["count"] += 1
         elif cvss_score >= 7:
+            cvss_scores.append(cvss_score)
             score_buckets[2]["count"] += 1
         elif cvss_score >= 4:
+            cvss_scores.append(cvss_score)
             score_buckets[1]["count"] += 1
         else:
+            cvss_scores.append(cvss_score)
             score_buckets[0]["count"] += 1
         if cve.kev_known_exploited or cve.exploited or (cvss_score is not None and cvss_score >= 9) or (epss_score is not None and epss_score >= 0.5):
             immediate_action_count += 1
@@ -194,7 +199,7 @@ def stats(db: Session = Depends(get_db)):
         "total_cves": total_cves,
         "total_products": db.scalar(select(func.count(Product.id))) or 0,
         "latest_release": latest,
-        "count_by_severity": {str(k): v for k, v in counts.items() if k},
+        "count_by_severity": {k: v for k, v in severity_counts.items() if k != "Unknown"},
         "exploited_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.exploited.is_(True))) or 0,
         "publicly_disclosed_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.publicly_disclosed.is_(True))) or 0,
         "total_kev_vulnerabilities": total_kev,
@@ -209,16 +214,19 @@ def stats(db: Session = Depends(get_db)):
         ],
         "critical_cves": severity_counts.get("Critical", 0),
         "highest_epss_score": db.scalar(select(func.max(CveEnrichment.epss_score)).where(CveEnrichment.source == "epss")),
+        "average_cvss_score": sum(cvss_scores) / len(cvss_scores) if cvss_scores else None,
+        "epss_enriched_cves": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "epss", CveEnrichment.epss_score.is_not(None))) or 0,
         "epss_at_least_1_percent": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "epss", CveEnrichment.epss_score >= 0.01)) or 0,
         "epss_at_least_10_percent": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "epss", CveEnrichment.epss_score >= 0.10)) or 0,
         "nvd_enriched_cves": db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.source == "nvd")) or 0,
-        "cvss_at_least_9": sum(1 for cve in cves if (cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score) is not None and (cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score) >= 9),
+        "impact_known_cves": len(known_impact_cves),
+        "cvss_at_least_9": sum(1 for cve in cves if (cve.cvss_score if cve.cvss_score is not None else cve.nvd_cvss_score) is not None and (cve.cvss_score if cve.cvss_score is not None else cve.nvd_cvss_score) >= 9),
         "immediate_action_count": immediate_action_count,
         "high_priority_count": high_priority_count,
         "routine_count": routine_count,
-        "cves_by_severity": [{"label": str(k or "Unknown"), "count": v} for k, v in severity_counts.items()],
+        "cves_by_severity": [{"label": label, "count": count} for label, count in sorted(severity_counts.items(), key=lambda item: item[1], reverse=True)],
         "cves_by_release": [{"label": row[0], "count": row[1]} for row in release_counts],
-        "cves_by_impact": [{"label": row[0], "count": row[1]} for row in impact_counts],
+        "cves_by_impact": [{"label": label, "count": count} for label, count in sorted(impact_counts.items(), key=lambda item: item[1], reverse=True)],
         "kev_distribution": [{"label": "CISA KEV", "count": total_kev}, {"label": "Non-KEV", "count": max(total_cves - total_kev, 0)}],
         "cvss_score_distribution": score_buckets,
         "kev_cves": [
@@ -227,7 +235,7 @@ def stats(db: Session = Depends(get_db)):
                 "title": cve.title,
                 "product": cve.kev_product or next((link.product.name for link in cve.product_links if link.product), None),
                 "epss_score": cve.epss_score,
-                "cvss_score": cve.nvd_cvss_score if cve.nvd_cvss_score is not None else cve.cvss_score,
+                "cvss_score": cve.cvss_score if cve.cvss_score is not None else cve.nvd_cvss_score,
                 "severity": cve.severity,
                 "required_action": cve.kev_required_action,
                 "due_date": cve.kev_due_date,
