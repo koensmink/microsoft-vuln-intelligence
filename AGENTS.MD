@@ -1,81 +1,31 @@
-Rebuild the frontend dashboard to match the provided dark vulnerability intelligence dashboard concept.
+Polish the vulnerability intelligence dashboard and fix metric semantics.
 
-Scope:
-- Frontend-focused implementation.
-- Backend changes only allowed for /api/v1/stats aggregation fields.
+Current issues observed on microsoftpatchtuesday.nl:
+1. CVEs by severity total shows 1,891 while total CVEs is 1,843.
+   - Fix backend aggregation to count distinct CVEs, not product mappings.
+2. Top EPSS chart displays values like 337 instead of 33.7%.
+   - Format EPSS as percentages consistently.
+3. Average CVSS is estimated from buckets.
+   - Replace with a real average CVSS calculated from CVE-level scores.
+   - Prefer MSRC cvss_score; fall back to nvd_cvss_score when MSRC is null.
+4. Enrichment Coverage panel is semantically incorrect.
+   - EPSS coverage must be enriched EPSS CVEs / total CVEs.
+   - NVD coverage must be NVD enriched CVEs / total CVEs.
+   - KEV should be shown as matches/count, not coverage.
+5. KEV table required_action text is too long.
+   - Truncate in table and show full text on detail page or tooltip.
+6. Impact distribution is dominated by Unknown.
+   - Add an Impact coverage KPI: CVEs with known impact / total CVEs.
 
 Constraints:
-- Do not modify MSRC collector.
-- Do not modify enrichment worker.
-- Do not modify scheduler services.
-- Do not modify Docker Compose.
-- Do not modify Alembic migrations.
-- Do not modify database schema.
-- Do not introduce new external APIs.
-- Existing enrichment data (NVD, EPSS, KEV) must be consumed from the current backend API.
-- Backend changes are only allowed for read-only /api/v1/stats aggregation support when strictly required.
-- Preserve all existing API routes.
+- Do not modify collector, enrichment worker, scheduler services, Docker Compose, Alembic migrations, or database schema.
+- Backend changes are allowed only in read-only /api/v1/stats aggregation logic.
+- Frontend changes are allowed for display, formatting, layout and empty states.
+- Preserve existing API routes.
 
-Required backend stats shape:
-- total_cves
-- critical_cves
-- total_kev_vulnerabilities
-- average_epss_score
-- highest_epss_score
-- epss_at_least_10_percent
-- nvd_enriched_cves
-- cves_by_severity
-- cves_by_release
-- cves_by_impact
-- kev_distribution
-- cvss_score_distribution
-- top_epss_cves
-- kev_cves
-- immediate_action_count
-- high_priority_count
-- routine_count
-
-Frontend requirements:
-1. Create dashboard layout with:
-   - top navigation bar
-   - left sidebar
-   - dark theme
-   - responsive card grid
-
-2. KPI cards:
-   - Total CVEs
-   - Critical CVEs
-   - High EPSS >= 10%
-   - KEV Catalog
-   - Average CVSS
-
-3. Charts:
-   - Donut chart: CVEs by severity
-   - Bar chart: CVSS score distribution
-   - Donut chart: CVEs by impact
-   - Bar chart: CVEs by release
-   - Horizontal/table view: Top 10/20 CVEs by EPSS
-
-4. Tables:
-   - Top CVEs by EPSS
-   - Known Exploited Vulnerabilities
-
-5. Right-side panels:
-   - Immediate Actions
-   - Enrichment Coverage:
-     - EPSS coverage
-     - NVD coverage
-     - KEV coverage
-
-6. UX:
-   - All cards must handle null/missing data.
-   - No .length usage on possibly undefined arrays.
-   - Use empty states.
-   - Keep CVE links clickable.
-   - Use consistent formatting for percentages and CVSS.
-
-7. Validation:
-   - npm run build passes.
-   - docker compose build frontend passes.
-   - docker compose up -d frontend passes.
-   - Dashboard renders with current /api/v1/stats output.
+Validation:
+- docker compose config passes.
+- docker compose build backend frontend passes.
+- docker compose up -d backend frontend passes.
+- /api/v1/stats returns severity counts that sum to total_cves.
+- Dashboard renders without runtime errors.
