@@ -199,7 +199,6 @@ def stats(db: Session = Depends(get_db)):
         "total_cves": total_cves,
         "total_products": db.scalar(select(func.count(Product.id))) or 0,
         "latest_release": latest,
-        "count_by_severity": severity_counts,
         "exploited_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.exploited.is_(True))) or 0,
         "publicly_disclosed_count": db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(CveProduct.publicly_disclosed.is_(True))) or 0,
         "total_kev_vulnerabilities": total_kev,
