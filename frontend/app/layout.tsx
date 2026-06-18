@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { getJson } from "../src/api";
+import { SidebarNav } from "./components/sidebar-nav";
 import "./globals.css";
 
 export const metadata = { title: "Microsoft Vulnerability Intelligence" };
@@ -57,14 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <span className="text-xs text-slate-500">Security Operations</span>
               </span>
             </Link>
-            <nav className="mt-10 space-y-2">
-              {navItems.map((item) => (
-                <Link key={`${item.label}-${item.href}`} className="group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold text-slate-400 transition hover:bg-cyan-400/10 hover:text-cyan-100" href={item.href}>
-                  <span className="grid h-8 w-8 place-items-center rounded-xl bg-slate-900 text-cyan-300 group-hover:bg-cyan-400/15">{item.icon}</span>
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+            <Suspense fallback={<nav className="mt-10" />}><SidebarNav items={navItems} /></Suspense>
             <div className="absolute bottom-6 left-5 right-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-xs text-slate-400">
               <p className="font-semibold uppercase tracking-[0.2em] text-slate-500">Data Sources</p>
               <div className="mt-3 space-y-2">
