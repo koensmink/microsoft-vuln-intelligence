@@ -133,12 +133,15 @@ class StatsOut(BaseModel):
     publicly_disclosed_count: int
     total_kev_vulnerabilities: int
     average_epss_score: float | None = None
+    average_cvss_score: float | None = None
     top_epss_cves: list[TopEpssCveOut] = []
     critical_cves: int = 0
     highest_epss_score: float | None = None
+    epss_enriched_cves: int = 0
     epss_at_least_1_percent: int = 0
     epss_at_least_10_percent: int = 0
     nvd_enriched_cves: int = 0
+    impact_known_cves: int = 0
     cvss_at_least_9: int = 0
     immediate_action_count: int = 0
     high_priority_count: int = 0
