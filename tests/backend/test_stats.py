@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -7,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import Cve, CveEnrichment, CveProduct, Product
+from app.models import Cve, CveEnrichment, CveProduct, Product, Release
 from backend.app.main import app
 
 
@@ -63,3 +64,32 @@ def test_stats_uses_cve_level_metric_semantics() -> None:
     assert stats["nvd_enriched_cves"] == 1
     assert stats["total_kev_vulnerabilities"] == 1
     assert stats["impact_known_cves"] == 1
+
+
+def test_stats_latest_release_uses_max_release_date_not_release_name_sort() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        db.add_all(
+            [
+                Release(release_name="2026-May", release_date=datetime(2026, 5, 13)),
+                Release(release_name="2026-Jun", release_date=datetime(2026, 6, 10)),
+            ]
+        )
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = TestClient(app).get("/api/v1/stats")
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert response.status_code == 200
+    assert response.json()["latest_release"] == "2026-Jun"

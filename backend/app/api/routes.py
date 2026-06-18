@@ -160,7 +160,13 @@ def get_release(release_name: str, db: Session = Depends(get_db)):
 
 @router.get("/stats", response_model=StatsOut)
 def stats(db: Session = Depends(get_db)):
-    latest = db.scalar(select(Release.release_name).order_by(Release.release_name.desc()).limit(1))
+    latest_release_date = select(func.max(Release.release_date)).scalar_subquery()
+    latest = db.scalar(
+        select(Release.release_name)
+        .where(Release.release_date == latest_release_date)
+        .order_by(Release.release_name.desc())
+        .limit(1)
+    )
 
     release_counts = db.execute(
         select(func.coalesce(Release.release_name, "Unknown"), func.count(Cve.id))
