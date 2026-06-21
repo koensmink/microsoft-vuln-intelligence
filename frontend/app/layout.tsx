@@ -34,7 +34,7 @@ function formatCount(value: number | null | undefined) {
 function SourceStatus({ label, count }: { label: string; count: number | null | undefined }) {
   const active = safeNumber(count) > 0;
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-800/80 bg-slate-950/55 px-3 py-2">
       <span className="truncate text-slate-300">{label}</span>
       <span className="flex items-center gap-2 text-slate-500">
         <span className={`h-2.5 w-2.5 rounded-full ${active ? "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" : "bg-slate-600"}`} />
@@ -46,7 +46,7 @@ function SourceStatus({ label, count }: { label: string; count: number | null | 
 
 function DataSourcesCard({ stats }: { stats: ShellStats }) {
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-xs text-slate-400">
+    <section className="rounded-2xl border border-cyan-400/10 bg-slate-900/45 p-4 shadow-xl shadow-black/20 backdrop-blur text-xs text-slate-400">
       <p className="font-semibold uppercase tracking-[0.2em] text-slate-500">Data Sources</p>
       <div className="mt-3 space-y-2">
         <SourceStatus label="Microsoft MSRC" count={stats.total_cves} />
@@ -64,8 +64,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className="dark">
       <body>
-        <div className="min-h-screen bg-[#020817] text-slate-100">
-          <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-cyan-400/10 bg-slate-950/95 px-5 py-6 shadow-2xl shadow-cyan-950/20 backdrop-blur lg:flex">
+        <div className="min-h-screen text-slate-100">
+          <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-cyan-400/10 bg-[#020817]/90 px-5 py-6 shadow-2xl shadow-cyan-950/20 backdrop-blur-xl lg:flex">
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <Link className="flex items-center gap-3" href="/">
                 <span className="grid h-11 w-11 place-items-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 text-cyan-200">MS</span>
