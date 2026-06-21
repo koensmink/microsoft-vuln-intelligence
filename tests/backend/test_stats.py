@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -157,3 +157,65 @@ def test_stats_timeseries_returns_release_level_points() -> None:
             "average_cvss_score": 8.0,
         },
     ]
+
+
+def test_stats_timeseries_excludes_empty_releases_and_limits_to_latest_12() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        product = Product(product_id="p-a", name="Product A")
+        db.add(product)
+        db.flush()
+
+        empty_old_release = Release(
+            release_name="1999-Sep", release_date=datetime(1999, 9, 1)
+        )
+        db.add(empty_old_release)
+
+        first_release_date = datetime(2025, 1, 14)
+        for index in range(13):
+            release = Release(
+                release_name=f"2025-{index + 1:02d}",
+                release_date=first_release_date + timedelta(days=index * 30),
+            )
+            db.add(release)
+            db.flush()
+
+            cve = Cve(cve_id=f"CVE-2025-{index + 1:04d}", release_id=release.id)
+            db.add(cve)
+            db.flush()
+            db.add(
+                CveProduct(
+                    cve_id=cve.id,
+                    product_id=product.id,
+                    severity="Important",
+                    cvss_base_score=7.0,
+                )
+            )
+
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = TestClient(app).get("/api/v1/stats/timeseries")
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert response.status_code == 200
+    points = response.json()
+    assert len(points) == 12
+    assert points[0]["label"] == "2025-02"
+    assert points[-1]["label"] == "2025-13"
+    assert "1999-Sep" not in {point["label"] for point in points}
+    assert all(point["total_cves"] > 0 for point in points)
+    assert [point["release_date"] for point in points] == sorted(
+        point["release_date"] for point in points
+    )
+
