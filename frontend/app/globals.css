@@ -2,10 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-body { @apply bg-slate-950 text-slate-100 antialiased; }
-.card { @apply rounded-2xl border border-slate-800/90 bg-slate-900/80 p-5 shadow-xl shadow-slate-950/30; }
-.link { @apply font-semibold text-cyan-300 hover:text-cyan-200 hover:underline; }
-.empty-state { @apply rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-4 text-sm text-slate-400; }
-.data-table { @apply w-full min-w-[760px] text-left text-sm; }
-.data-table th { @apply border-b border-slate-700 pb-3 pr-4 text-xs font-semibold uppercase tracking-wider text-slate-400; }
-.data-table td { @apply border-b border-slate-800 py-3 pr-4 align-top text-slate-200; }
+:root { color-scheme: dark; }
+
+body {
+  @apply text-slate-100 antialiased;
+  background:
+    radial-gradient(circle at 25% 0%, rgba(14, 165, 233, 0.18), transparent 34rem),
+    radial-gradient(circle at 88% 16%, rgba(59, 130, 246, 0.12), transparent 30rem),
+    linear-gradient(135deg, #020617 0%, #03101f 45%, #020617 100%);
+}
+
+.soc-card { @apply rounded-2xl border border-slate-700/60 bg-slate-900/55 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl; }
+.card { @apply rounded-2xl border border-slate-700/60 bg-slate-900/55 p-5 shadow-2xl shadow-black/30 backdrop-blur-xl; }
+.panel-title { @apply text-sm font-black uppercase tracking-[0.18em] text-slate-200; }
+.link { @apply font-semibold text-cyan-300 hover:text-cyan-100 hover:underline; }
+.empty-state { @apply rounded-xl border border-dashed border-slate-700/80 bg-slate-950/55 p-4 text-sm text-slate-400; }
+.data-table { @apply w-full min-w-[760px] text-left text-xs; }
+.data-table th { @apply border-b border-slate-700/80 pb-3 pr-4 text-[0.65rem] font-black uppercase tracking-[0.16em] text-slate-500; }
+.data-table td { @apply border-b border-slate-800/80 py-3 pr-4 align-top text-slate-200; }
