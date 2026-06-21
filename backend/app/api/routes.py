@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -420,18 +422,23 @@ def stats_timeseries(db: Session = Depends(get_db)):
     releases = (
         db.scalars(
             select(Release)
+            .where(Release.cves.any())
             .options(
                 joinedload(Release.cves).joinedload(Cve.product_links),
                 joinedload(Release.cves).joinedload(Cve.enrichments),
             )
-            .order_by(Release.release_date, Release.release_name)
+            .order_by(Release.release_date.desc(), Release.release_name.desc())
+            .limit(12)
         )
         .unique()
         .all()
     )
 
     points = []
-    for release in releases:
+    for release in sorted(
+        releases,
+        key=lambda item: (item.release_date or datetime.min, item.release_name),
+    ):
         cvss_scores: list[float] = []
         critical_cves = 0
         high_epss_count = 0
