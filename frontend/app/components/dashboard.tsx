@@ -38,7 +38,11 @@ function formatTruncated(value: string | null | undefined, maxLength = 78) { ret
 function colorFor(label: string, index: number) { return severityColors[label] ?? palette[index % palette.length]; }
 
 function Sparkline({ tone }: { tone: Tone }) {
-  return <div className="mt-3 flex h-8 items-end gap-1.5 opacity-80">{[36, 54, 43, 74, 58, 88, 69, 94].map((height, index) => <span key={index} className={`block w-full rounded-t-sm ${toneStyles[tone].bgSoft}`} style={{ height: `${height}%` }} />)}</div>;
+  const stroke = toneStyles[tone].fill;
+  const points = "4,32 25,25 45,28 66,16 88,20 109,9 130,15 156,6";
+  const areaPath = "M4 32 L25 25 L45 28 L66 16 L88 20 L109 9 L130 15 L156 6 L156 42 L4 42 Z";
+
+  return <div className="mt-3 h-11 w-full"><svg viewBox="0 0 160 42" className="h-full w-full overflow-visible" aria-hidden="true"><path d={areaPath} fill={stroke} opacity="0.16" /><polyline points={points} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 8px ${stroke}99)` }} /><polyline points={points} fill="none" stroke="#e2e8f0" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.28" /></svg></div>;
 }
 
 export function KpiCard({ label, value, helper, href, tone = "blue" }: { label: string; value: string; helper: string; href: string; tone?: Tone }) {
