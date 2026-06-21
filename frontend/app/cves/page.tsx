@@ -16,7 +16,7 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
   const minEpss = params.epss === "high" ? "0.10" : params.min_epss ?? params.min_epss_score;
   const minCvss = params.min_cvss ?? params.min_cvss_score;
   const kev = params.kev ?? params.kev_only;
-  for (const key of ["search", "severity", "exploited", "publicly_disclosed"]) if (params[key]) qs.set(key, params[key]!);
+  for (const key of ["search", "severity", "exploited", "publicly_disclosed", "impact"]) if (params[key]) qs.set(key, params[key]!);
   if (release) qs.set("release_name", release);
   if (minEpss) qs.set("min_epss_score", minEpss);
   if (minCvss) qs.set("min_cvss_score", minCvss);
@@ -24,7 +24,7 @@ export default async function CvesPage({ searchParams }: { searchParams: Promise
   const apiCves = await getJson<Cve[]>(`/cves${qs.size ? `?${qs}` : ""}`, []);
   const filteredCves = (apiCves ?? []).filter((cve) => {
     if (severity && cve.severity !== severity) return false;
-    if (params.impact && cve.impact !== params.impact) return false;
+    if (params.impact && (params.impact === "Unknown" ? cve.impact && cve.impact !== "Unknown" : cve.impact !== params.impact)) return false;
     if (release && cve.release?.release_name !== release) return false;
     if (kev === "true" && !cve.kev_known_exploited) return false;
     if (minEpss && (cve.epss_score ?? 0) < Number(minEpss)) return false;

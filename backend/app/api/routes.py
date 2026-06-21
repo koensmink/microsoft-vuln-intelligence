@@ -40,6 +40,7 @@ def list_cves(
     kev_only: bool = False,
     min_epss_score: float | None = Query(None, ge=0, le=1),
     min_cvss_score: float | None = Query(None, ge=0, le=10),
+    impact: str | None = None,
 ):
     stmt = select(Cve).options(
         joinedload(Cve.release),
@@ -62,6 +63,19 @@ def list_cves(
 
     if severity:
         stmt = stmt.join(Cve.product_links).where(CveProduct.severity == severity)
+
+    if impact:
+        if impact == "Unknown":
+            stmt = stmt.where(
+                or_(
+                    Cve.product_links.any(CveProduct.impact == "Unknown"),
+                    ~Cve.product_links.any(
+                        CveProduct.impact.is_not(None) & (CveProduct.impact != "")
+                    ),
+                )
+            )
+        else:
+            stmt = stmt.where(Cve.product_links.any(CveProduct.impact == impact))
 
     if product:
         stmt = (
