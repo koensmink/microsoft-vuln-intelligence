@@ -93,3 +93,67 @@ def test_stats_latest_release_uses_max_release_date_not_release_name_sort() -> N
 
     assert response.status_code == 200
     assert response.json()["latest_release"] == "2026-Jun"
+
+
+def test_stats_timeseries_returns_release_level_points() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        product = Product(product_id="p-a", name="Product A")
+        may = Release(release_name="2026-May", release_date=datetime(2026, 5, 13))
+        jun = Release(release_name="2026-Jun", release_date=datetime(2026, 6, 10))
+        db.add_all([product, may, jun])
+        db.flush()
+
+        cve_1 = Cve(cve_id="CVE-2026-1001", release_id=may.id)
+        cve_2 = Cve(cve_id="CVE-2026-1002", release_id=may.id)
+        cve_3 = Cve(cve_id="CVE-2026-1003", release_id=jun.id)
+        db.add_all([cve_1, cve_2, cve_3])
+        db.flush()
+
+        db.add_all(
+            [
+                CveProduct(cve_id=cve_1.id, product_id=product.id, severity="Critical", cvss_base_score=9.8),
+                CveProduct(cve_id=cve_2.id, product_id=product.id, severity="Important", cvss_base_score=7.2),
+                CveProduct(cve_id=cve_3.id, product_id=product.id, severity="Critical"),
+                CveEnrichment(cve_id=cve_1.id, source="epss", epss_score=0.25),
+                CveEnrichment(cve_id=cve_1.id, source="kev", kev_known_exploited=True),
+                CveEnrichment(cve_id=cve_3.id, source="nvd", cvss_score=8.0),
+            ]
+        )
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = TestClient(app).get("/api/v1/stats/timeseries")
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "label": "2026-May",
+            "release_date": "2026-05-13T00:00:00",
+            "total_cves": 2,
+            "critical_cves": 1,
+            "high_epss_count": 1,
+            "kev_count": 1,
+            "average_cvss_score": 8.5,
+        },
+        {
+            "label": "2026-Jun",
+            "release_date": "2026-06-10T00:00:00",
+            "total_cves": 1,
+            "critical_cves": 1,
+            "high_epss_count": 0,
+            "kev_count": 0,
+            "average_cvss_score": 8.0,
+        },
+    ]

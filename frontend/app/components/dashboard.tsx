@@ -3,6 +3,7 @@ import Link from "next/link";
 export type CountBucket = { label: string | null; count: number | null };
 export type KevCve = { cve_id: string; title: string | null; product: string | null; epss_score: number | null; cvss_score: number | null; severity: string | null; required_action: string | null; due_date: string | null };
 export type TopEpssCve = { cve_id: string; title: string | null; epss_score: number | null; epss_percentile: number | null };
+export type StatsTimeseriesPoint = { label: string; release_date: string | null; total_cves: number; critical_cves: number; high_epss_count: number; kev_count: number; average_cvss_score: number | null };
 
 export type Stats = {
   total_cves?: number | null; total_products?: number | null; latest_release?: string | null; exploited_count?: number | null; publicly_disclosed_count?: number | null;
@@ -37,17 +38,35 @@ function normalizeBuckets(buckets: CountBucket[] | null | undefined) { return (b
 function formatTruncated(value: string | null | undefined, maxLength = 78) { return !value ? "—" : value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}…` : value; }
 function colorFor(label: string, index: number) { return severityColors[label] ?? palette[index % palette.length]; }
 
-function Sparkline({ tone }: { tone: Tone }) {
+function Sparkline({ tone, values = [] }: { tone: Tone; values?: Array<number | null | undefined> }) {
   const stroke = toneStyles[tone].fill;
-  const points = "4,32 25,25 45,28 66,16 88,20 109,9 130,15 156,6";
-  const areaPath = "M4 32 L25 25 L45 28 L66 16 L88 20 L109 9 L130 15 L156 6 L156 42 L4 42 Z";
+  const numericValues = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+  if (numericValues.length < 2) {
+    return <div className="mt-3 h-11 w-full" aria-label="Not enough release history for trend"><svg viewBox="0 0 160 42" className="h-full w-full overflow-visible" role="img" aria-label="No trend available"><line x1="8" y1="24" x2="152" y2="24" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeDasharray="2 7" opacity="0.45" /><circle cx="80" cy="24" r="3" fill="#94a3b8" opacity="0.5" /></svg></div>;
+  }
+
+  const width = 160;
+  const height = 42;
+  const paddingX = 4;
+  const paddingY = 6;
+  const min = Math.min(...numericValues);
+  const max = Math.max(...numericValues);
+  const range = max - min;
+  const points = numericValues.map((value, index) => {
+    const x = paddingX + (index / (numericValues.length - 1)) * (width - paddingX * 2);
+    const normalized = range === 0 ? 0.5 : (value - min) / range;
+    const y = height - paddingY - normalized * (height - paddingY * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const areaPath = `M${points.replaceAll(" ", " L")} L${width - paddingX},${height} L${paddingX},${height} Z`;
 
   return <div className="mt-3 h-11 w-full"><svg viewBox="0 0 160 42" className="h-full w-full overflow-visible" aria-hidden="true"><path d={areaPath} fill={stroke} opacity="0.16" /><polyline points={points} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 8px ${stroke}99)` }} /><polyline points={points} fill="none" stroke="#e2e8f0" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.28" /></svg></div>;
 }
 
-export function KpiCard({ label, value, helper, href, tone = "blue" }: { label: string; value: string; helper: string; href: string; tone?: Tone }) {
+export function KpiCard({ label, value, helper, href, tone = "blue", series = [] }: { label: string; value: string; helper: string; href: string; tone?: Tone; series?: Array<number | null | undefined> }) {
   const styles = toneStyles[tone];
-  return <Link href={href} className={`soc-card group block min-h-36 cursor-pointer border ${styles.border} ${styles.shadow} transition hover:-translate-y-0.5 hover:bg-slate-900/85`}><div className="flex items-start justify-between gap-3"><p className="text-[0.66rem] font-bold uppercase tracking-[0.22em] text-slate-500">{label}</p><span className={`block h-2.5 w-2.5 rounded-full ${styles.bg} shadow-[0_0_18px_currentColor]`} /></div><p className={`mt-3 text-3xl font-black tabular-nums ${styles.text}`}>{value}</p><p className="mt-1 min-h-9 text-xs leading-5 text-slate-400">{helper}</p><Sparkline tone={tone} /></Link>;
+  return <Link href={href} className={`soc-card group block min-h-36 cursor-pointer border ${styles.border} ${styles.shadow} transition hover:-translate-y-0.5 hover:bg-slate-900/85`}><div className="flex items-start justify-between gap-3"><p className="text-[0.66rem] font-bold uppercase tracking-[0.22em] text-slate-500">{label}</p><span className={`block h-2.5 w-2.5 rounded-full ${styles.bg} shadow-[0_0_18px_currentColor]`} /></div><p className={`mt-3 text-3xl font-black tabular-nums ${styles.text}`}>{value}</p><p className="mt-1 min-h-9 text-xs leading-5 text-slate-400">{helper}</p><Sparkline tone={tone} values={series} /></Link>;
 }
 
 export function DonutChart({ title, buckets, param }: { title: string; buckets: CountBucket[] | null | undefined; param: string }) {

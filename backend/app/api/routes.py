@@ -12,6 +12,7 @@ from app.schemas import (
     ProductOut,
     ReleaseOut,
     StatsOut,
+    StatsTimeseriesPointOut,
     SyncRequest,
 )
 
@@ -412,6 +413,58 @@ def stats(db: Session = Depends(get_db)):
             for cve in kev_rows
         ],
     }
+
+
+@router.get("/stats/timeseries", response_model=list[StatsTimeseriesPointOut])
+def stats_timeseries(db: Session = Depends(get_db)):
+    releases = (
+        db.scalars(
+            select(Release)
+            .options(
+                joinedload(Release.cves).joinedload(Cve.product_links),
+                joinedload(Release.cves).joinedload(Cve.enrichments),
+            )
+            .order_by(Release.release_date, Release.release_name)
+        )
+        .unique()
+        .all()
+    )
+
+    points = []
+    for release in releases:
+        cvss_scores: list[float] = []
+        critical_cves = 0
+        high_epss_count = 0
+        kev_count = 0
+
+        for cve in release.cves:
+            if cve.severity == "Critical":
+                critical_cves += 1
+
+            epss_score = cve.epss_score
+            if epss_score is not None and epss_score >= 0.10:
+                high_epss_count += 1
+
+            if cve.kev_known_exploited:
+                kev_count += 1
+
+            cvss_score = cve.cvss_score if cve.cvss_score is not None else cve.nvd_cvss_score
+            if cvss_score is not None:
+                cvss_scores.append(cvss_score)
+
+        points.append(
+            {
+                "label": release.release_name,
+                "release_date": release.release_date,
+                "total_cves": len(release.cves),
+                "critical_cves": critical_cves,
+                "high_epss_count": high_epss_count,
+                "kev_count": kev_count,
+                "average_cvss_score": sum(cvss_scores) / len(cvss_scores) if cvss_scores else None,
+            }
+        )
+
+    return points
 
 
 @router.post("/admin/sync")

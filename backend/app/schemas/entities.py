@@ -124,6 +124,16 @@ class KevCveOut(BaseModel):
     due_date: date | None = None
 
 
+class StatsTimeseriesPointOut(BaseModel):
+    label: str
+    release_date: date | datetime | None = None
+    total_cves: int
+    critical_cves: int
+    high_epss_count: int
+    kev_count: int
+    average_cvss_score: float | None = None
+
+
 class StatsOut(BaseModel):
     total_cves: int
     total_products: int
