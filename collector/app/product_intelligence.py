@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from sqlalchemy import text
+
+
+RAW_PRODUCT_NAME_COLUMN = "name"
 
 
 @dataclass(frozen=True)
@@ -46,3 +52,39 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
             return ProductMappingResult(family, category, confidence)
 
     return ProductMappingResult("Other Microsoft Product", "Unknown", 0.50)
+
+
+def upsert_product_mapping(conn, raw_name: str | None) -> ProductMappingResult:
+    """Classify and persist a raw product name in product_mappings.
+
+    The canonical raw product name is products.name. Keeping this helper beside
+    map_product_name makes collector sync and backfills use the same idempotent
+    upsert semantics.
+    """
+    name = (raw_name or "").strip()
+    mapping = map_product_name(name)
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        text(
+            """
+            INSERT INTO product_mappings (raw_name, product_family, product_category, confidence, source, created_at, updated_at)
+            VALUES (:raw_name, :product_family, :product_category, :confidence, :source, :created_at, :updated_at)
+            ON CONFLICT (raw_name) DO UPDATE SET
+                product_family = EXCLUDED.product_family,
+                product_category = EXCLUDED.product_category,
+                confidence = EXCLUDED.confidence,
+                source = EXCLUDED.source,
+                updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "raw_name": name,
+            "product_family": mapping.product_family,
+            "product_category": mapping.product_category,
+            "confidence": mapping.confidence,
+            "source": mapping.source,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    return mapping
