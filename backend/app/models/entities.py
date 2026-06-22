@@ -130,6 +130,19 @@ class Product(Base):
         return len(self.cve_links)
 
 
+class ProductMapping(Base):
+    __tablename__ = "product_mappings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    raw_name: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    product_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    product_category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(64), default="rule")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CveProduct(Base):
     __tablename__ = "cve_products"
     __table_args__ = (UniqueConstraint("cve_id", "product_id"),)
@@ -145,6 +158,8 @@ class CveProduct(Base):
     cvss_vector: Mapped[str | None] = mapped_column(Text)
     exploited: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     publicly_disclosed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    product_family: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    product_category: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

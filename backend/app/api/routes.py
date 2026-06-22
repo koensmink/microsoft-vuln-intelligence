@@ -5,13 +5,16 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
-from app.models import AffectedProduct, Cve, Product, Release
+from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
 from app.models.entities import CveEnrichment, CveProduct
 from app.schemas import (
     CveDetailOut,
     CveEnrichmentOut,
     CveOut,
+    ProductCategoryOut,
+    ProductMappingOut,
     ProductOut,
+    ProductSummaryOut,
     ReleaseOut,
     StatsOut,
     StatsTimeseriesPointOut,
@@ -19,6 +22,66 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _filtered_cve_ids_subquery(release: str | None, severity: str | None, kev: bool | None, min_epss: float | None):
+    stmt = select(Cve.id)
+    if release:
+        stmt = stmt.join(Release).where(Release.release_name == release)
+    if severity:
+        stmt = stmt.where(Cve.product_links.any(CveProduct.severity == severity))
+    if kev is not None:
+        kev_clause = Cve.enrichments.any((CveEnrichment.source == "kev") & (CveEnrichment.kev_known_exploited.is_(True)))
+        stmt = stmt.where(kev_clause if kev else ~kev_clause)
+    if min_epss is not None:
+        stmt = stmt.where(Cve.enrichments.any((CveEnrichment.source == "epss") & (CveEnrichment.epss_score >= min_epss)))
+    return stmt.subquery()
+
+
+def _product_rollup(db: Session, group_fields: list, release: str | None = None, severity: str | None = None, kev: bool | None = None, min_epss: float | None = None, limit: int | None = 20):
+    cve_ids = _filtered_cve_ids_subquery(release, severity, kev, min_epss)
+    cvss_value = func.max(func.coalesce(CveProduct.cvss_base_score, CveEnrichment.cvss_score))
+    rows = db.execute(
+        select(
+            *group_fields,
+            Cve.id.label("cve_pk"),
+            func.max(CveProduct.severity == "Critical").label("is_critical"),
+            func.max(CveEnrichment.kev_known_exploited.is_(True)).label("is_kev"),
+            func.max(CveEnrichment.epss_score >= 0.10).label("is_high_epss"),
+            cvss_value.label("cvss_score"),
+        )
+        .select_from(CveProduct)
+        .join(Cve)
+        .outerjoin(Cve.enrichments)
+        .where(Cve.id.in_(select(cve_ids.c.id)))
+        .group_by(*group_fields, Cve.id)
+    ).all()
+    grouped = {}
+    for row in rows:
+        key = tuple(row[i] or "Unknown" for i in range(len(group_fields)))
+        item = grouped.setdefault(key, {"cves": set(), "critical": 0, "kev": 0, "epss": 0, "scores": []})
+        item["cves"].add(row.cve_pk)
+        item["critical"] += int(bool(row.is_critical))
+        item["kev"] += int(bool(row.is_kev))
+        item["epss"] += int(bool(row.is_high_epss))
+        if row.cvss_score is not None:
+            item["scores"].append(float(row.cvss_score))
+    results = []
+    for key, item in grouped.items():
+        result = {
+            "cve_count": len(item["cves"]),
+            "critical_count": item["critical"],
+            "kev_count": item["kev"],
+            "high_epss_count": item["epss"],
+            "average_cvss_score": sum(item["scores"]) / len(item["scores"]) if item["scores"] else None,
+        }
+        if len(key) == 2:
+            result.update({"product_family": key[0], "product_category": key[1]})
+        else:
+            result.update({"product_category": key[0]})
+        results.append(result)
+    results.sort(key=lambda item: item["cve_count"], reverse=True)
+    return results[:limit] if limit else results
 
 
 @router.get("/health")
@@ -41,6 +104,8 @@ def list_cves(
     min_epss_score: float | None = Query(None, ge=0, le=1),
     min_cvss_score: float | None = Query(None, ge=0, le=10),
     impact: str | None = None,
+    product_family: str | None = None,
+    product_category: str | None = None,
 ):
     stmt = select(Cve).options(
         joinedload(Cve.release),
@@ -76,6 +141,12 @@ def list_cves(
             )
         else:
             stmt = stmt.where(Cve.product_links.any(CveProduct.impact == impact))
+
+    if product_family:
+        stmt = stmt.where(Cve.product_links.any(CveProduct.product_family == product_family))
+
+    if product_category:
+        stmt = stmt.where(Cve.product_links.any(CveProduct.product_category == product_category))
 
     if product:
         stmt = (
@@ -147,6 +218,21 @@ def get_cve(cve_id: str, db: Session = Depends(get_db)):
     if not cve:
         raise HTTPException(404, "CVE not found")
     return cve
+
+
+@router.get("/products/summary", response_model=list[ProductSummaryOut])
+def products_summary(db: Session = Depends(get_db), release: str | None = None, severity: str | None = None, kev: bool | None = None, min_epss: float | None = Query(None, ge=0, le=1), limit: int = Query(20, ge=1, le=100)):
+    return _product_rollup(db, [func.coalesce(CveProduct.product_family, "Unknown"), func.coalesce(CveProduct.product_category, "Unknown")], release, severity, kev, min_epss, limit)
+
+
+@router.get("/products/categories", response_model=list[ProductCategoryOut])
+def products_categories(db: Session = Depends(get_db), release: str | None = None, severity: str | None = None, kev: bool | None = None, min_epss: float | None = Query(None, ge=0, le=1), limit: int = Query(50, ge=1, le=100)):
+    return _product_rollup(db, [func.coalesce(CveProduct.product_category, "Unknown")], release, severity, kev, min_epss, limit)
+
+
+@router.get("/products/mappings", response_model=list[ProductMappingOut])
+def products_mappings(db: Session = Depends(get_db), limit: int = Query(500, ge=1, le=5000), offset: int = Query(0, ge=0)):
+    return db.scalars(select(ProductMapping).order_by(ProductMapping.raw_name).limit(limit).offset(offset)).all()
 
 
 @router.get("/products", response_model=list[ProductOut])
@@ -412,6 +498,8 @@ def stats(db: Session = Depends(get_db)):
             {"label": "Non-KEV", "count": max(total_cves - total_kev, 0)},
         ],
         "cvss_score_distribution": score_buckets,
+        "top_product_families": _product_rollup(db, [func.coalesce(CveProduct.product_family, "Unknown"), func.coalesce(CveProduct.product_category, "Unknown")], limit=10),
+        "top_product_categories": _product_rollup(db, [func.coalesce(CveProduct.product_category, "Unknown")], limit=12),
         "kev_cves": [
             {
                 "cve_id": cve.cve_id,

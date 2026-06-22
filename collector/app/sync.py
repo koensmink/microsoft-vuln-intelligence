@@ -103,6 +103,7 @@ def normalize_release(update: dict) -> dict:
 
 
 from .cvrf_parser import parse_cvrf
+from .product_intelligence import map_product_name
 
 
 def _row_mapping(row):
@@ -196,13 +197,20 @@ def sync_parsed_release(conn, parsed: dict, update: dict | None = None) -> dict[
                 product_db_ids[pid] = conn.execute(text("INSERT INTO products (product_id, name, cpe, family, created_at, updated_at) VALUES (:product_id, :name, :cpe, :family, :created_at, :updated_at) ON CONFLICT (product_id) DO UPDATE SET name = EXCLUDED.name, updated_at = EXCLUDED.updated_at RETURNING id"), {"product_id": pid, "name": product.get("name") or pid, "cpe": product.get("cpe"), "family": product.get("family"), "created_at": utcnow(), "updated_at": utcnow()}).scalar_one()
             pdata = cve.get("product_data", {}).get(pid, {})
             existing_link = _row_mapping(conn.execute(text("SELECT * FROM cve_products WHERE cve_id = :cve_id AND product_id = :product_id"), {"cve_id": cve_db_id, "product_id": product_db_ids[pid]}).first())
-            link_values = {"cve_id": cve_db_id, "product_id": product_db_ids[pid], "status": pdata.get("status"), "severity": pdata.get("severity"), "impact": pdata.get("impact"), "cvss_base_score": pdata.get("cvss_base_score"), "cvss_temporal_score": pdata.get("cvss_temporal_score"), "cvss_vector": pdata.get("cvss_vector"), "exploited": cve.get("exploited", False), "publicly_disclosed": cve.get("publicly_disclosed", False)}
+            raw_name = product.get("name") or pid
+            mapping = map_product_name(raw_name)
             conn.execute(text("""
-                INSERT INTO cve_products (cve_id, product_id, status, severity, impact, cvss_base_score, cvss_temporal_score, cvss_vector, exploited, publicly_disclosed, created_at, updated_at)
-                VALUES (:cve_id, :product_id, :status, :severity, :impact, :cvss_base_score, :cvss_temporal_score, :cvss_vector, :exploited, :publicly_disclosed, :created_at, :updated_at)
-                ON CONFLICT (cve_id, product_id) DO UPDATE SET status = EXCLUDED.status, severity = EXCLUDED.severity, impact = EXCLUDED.impact, cvss_base_score = EXCLUDED.cvss_base_score, cvss_temporal_score = EXCLUDED.cvss_temporal_score, cvss_vector = EXCLUDED.cvss_vector, exploited = EXCLUDED.exploited, publicly_disclosed = EXCLUDED.publicly_disclosed, updated_at = EXCLUDED.updated_at
+                INSERT INTO product_mappings (raw_name, product_family, product_category, confidence, source, created_at, updated_at)
+                VALUES (:raw_name, :product_family, :product_category, :confidence, :source, :created_at, :updated_at)
+                ON CONFLICT (raw_name) DO UPDATE SET product_family = EXCLUDED.product_family, product_category = EXCLUDED.product_category, confidence = EXCLUDED.confidence, source = EXCLUDED.source, updated_at = EXCLUDED.updated_at
+            """), {"raw_name": raw_name, "product_family": mapping.product_family, "product_category": mapping.product_category, "confidence": mapping.confidence, "source": mapping.source, "created_at": utcnow(), "updated_at": utcnow()})
+            link_values = {"cve_id": cve_db_id, "product_id": product_db_ids[pid], "status": pdata.get("status"), "severity": pdata.get("severity"), "impact": pdata.get("impact"), "cvss_base_score": pdata.get("cvss_base_score"), "cvss_temporal_score": pdata.get("cvss_temporal_score"), "cvss_vector": pdata.get("cvss_vector"), "exploited": cve.get("exploited", False), "publicly_disclosed": cve.get("publicly_disclosed", False), "product_family": mapping.product_family, "product_category": mapping.product_category}
+            conn.execute(text("""
+                INSERT INTO cve_products (cve_id, product_id, status, severity, impact, cvss_base_score, cvss_temporal_score, cvss_vector, exploited, publicly_disclosed, product_family, product_category, created_at, updated_at)
+                VALUES (:cve_id, :product_id, :status, :severity, :impact, :cvss_base_score, :cvss_temporal_score, :cvss_vector, :exploited, :publicly_disclosed, :product_family, :product_category, :created_at, :updated_at)
+                ON CONFLICT (cve_id, product_id) DO UPDATE SET status = EXCLUDED.status, severity = EXCLUDED.severity, impact = EXCLUDED.impact, cvss_base_score = EXCLUDED.cvss_base_score, cvss_temporal_score = EXCLUDED.cvss_temporal_score, cvss_vector = EXCLUDED.cvss_vector, exploited = EXCLUDED.exploited, publicly_disclosed = EXCLUDED.publicly_disclosed, product_family = EXCLUDED.product_family, product_category = EXCLUDED.product_category, updated_at = EXCLUDED.updated_at
             """), {**link_values, "created_at": utcnow(), "updated_at": utcnow()})
-            cve_changed = cve_changed or _changed(existing_link, link_values, ["status", "severity", "impact", "cvss_base_score", "cvss_temporal_score", "cvss_vector", "exploited", "publicly_disclosed"])
+            cve_changed = cve_changed or _changed(existing_link, link_values, ["status", "severity", "impact", "cvss_base_score", "cvss_temporal_score", "cvss_vector", "exploited", "publicly_disclosed", "product_family", "product_category"])
 
         for remediation in cve.get("remediations", []):
             pid = remediation.get("product_id")
