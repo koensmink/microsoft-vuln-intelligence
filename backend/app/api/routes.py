@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
@@ -45,9 +45,15 @@ def _product_rollup(db: Session, group_fields: list, release: str | None = None,
         select(
             *group_fields,
             Cve.id.label("cve_pk"),
-            func.max(CveProduct.severity == "Critical").label("is_critical"),
-            func.max(CveEnrichment.kev_known_exploited.is_(True)).label("is_kev"),
-            func.max(CveEnrichment.epss_score >= 0.10).label("is_high_epss"),
+            func.max(case((CveProduct.severity == "Critical", 1), else_=0)).label(
+                "is_critical"
+            ),
+            func.max(
+                case((CveEnrichment.kev_known_exploited.is_(True), 1), else_=0)
+            ).label("is_kev"),
+            func.max(case((CveEnrichment.epss_score >= 0.10, 1), else_=0)).label(
+                "is_high_epss"
+            ),
             cvss_value.label("cvss_score"),
         )
         .select_from(CveProduct)

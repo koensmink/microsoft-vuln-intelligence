@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import Cve, CveProduct, Product
+from app.models import Cve, CveEnrichment, CveProduct, Product
 from backend.app.main import app
 
 
@@ -87,3 +87,71 @@ def test_list_cves_filters_by_impact() -> None:
         "CVE-2026-0004",
     }
     assert {cve["impact"] for cve in unknown_response.json()} == {"Unknown", None}
+
+
+def test_product_rollup_endpoints_return_truthy_counts() -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        product = Product(product_id="p-a", name="Product A")
+        db.add(product)
+        db.flush()
+
+        cve = Cve(cve_id="CVE-2026-0101", title="Critical KEV high EPSS")
+        db.add(cve)
+        db.flush()
+        db.add_all(
+            [
+                CveProduct(
+                    cve_id=cve.id,
+                    product_id=product.id,
+                    product_family="Windows",
+                    product_category="Operating Systems",
+                    severity="Critical",
+                    cvss_base_score=9.8,
+                ),
+                CveEnrichment(cve_id=cve.id, source="kev", kev_known_exploited=True),
+                CveEnrichment(cve_id=cve.id, source="epss", epss_score=0.25),
+            ]
+        )
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        stats_response = client.get("/api/v1/stats")
+        summary_response = client.get("/api/v1/products/summary")
+        categories_response = client.get("/api/v1/products/categories")
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert stats_response.status_code == 200
+    assert summary_response.status_code == 200
+    assert categories_response.status_code == 200
+
+    stats = stats_response.json()
+    assert stats["top_product_families"][0]["critical_count"] == 1
+    assert stats["top_product_families"][0]["kev_count"] == 1
+    assert stats["top_product_families"][0]["high_epss_count"] == 1
+
+    summary = summary_response.json()
+    assert summary[0]["product_family"] == "Windows"
+    assert summary[0]["product_category"] == "Operating Systems"
+    assert summary[0]["critical_count"] == 1
+    assert summary[0]["kev_count"] == 1
+    assert summary[0]["high_epss_count"] == 1
+
+    categories = categories_response.json()
+    assert categories[0]["product_category"] == "Operating Systems"
+    assert categories[0]["critical_count"] == 1
+    assert categories[0]["kev_count"] == 1
+    assert categories[0]["high_epss_count"] == 1
