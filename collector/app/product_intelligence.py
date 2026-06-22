@@ -18,6 +18,7 @@ class ProductMappingResult:
 
 
 def map_product_name(raw_name: str | None) -> ProductMappingResult:
+    """Map the canonical raw product name from products.name to rollup labels."""
     name = (raw_name or "").strip()
     if not name:
         return ProductMappingResult("Unknown", "Unknown", 1.0)
@@ -26,19 +27,28 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
 
     rules: list[tuple[tuple[str, ...], str, str, float]] = [
         (("azure stack",), "Azure Stack", "Cloud Platform", 0.98),
+        (("azure kubernetes service", "aks"), "Azure Kubernetes Service", "Cloud Platform", 0.98),
+        (("azure devops",), "Azure DevOps", "Developer Tools", 0.98),
         (("windows server",), "Windows Server", "Operating System", 0.98),
+        (("windows 11",), "Windows 11", "Operating System", 0.97),
+        (("windows 10",), "Windows 10", "Operating System", 0.97),
         (("microsoft 365 apps",), "Microsoft 365 Apps", "Productivity", 0.98),
+        (("microsoft 365",), "Microsoft 365", "Productivity", 0.96),
         (("azure active directory", "entra"), "Entra ID", "Identity", 0.96),
         (("power platform", "power apps", "power automate", "power bi"), "Power Platform", "Business Applications", 0.95),
         (("sql server",), "SQL Server", "Database", 0.98),
+        (("windows print spooler", "print spooler"), "Windows Print Spooler", "Operating System Component", 0.96),
+        (("remote desktop", "rdp"), "Remote Desktop Services", "Operating System Component", 0.95),
         (("exchange",), "Exchange Server", "Messaging", 0.96),
         (("sharepoint",), "SharePoint Server", "Collaboration", 0.96),
         (("visual studio",), "Visual Studio", "Developer Tools", 0.96),
+        (("github",), "GitHub", "Developer Tools", 0.96),
         (("asp.net", ".net"), ".NET", "Runtime / Framework", 0.96),
         (("defender",), "Microsoft Defender", "Security", 0.95),
         (("teams",), "Microsoft Teams", "Collaboration", 0.95),
         (("onedrive",), "OneDrive", "Collaboration", 0.95),
         (("dynamics",), "Dynamics 365", "Business Applications", 0.95),
+        (("copilot",), "Microsoft Copilot", "AI", 0.92),
         (("hyper-v", "hyper v"), "Hyper-V", "Virtualization", 0.96),
         (("edge", "chromium"), "Microsoft Edge", "Browser", 0.90),
         (("office", "word", "excel", "powerpoint", "outlook", "access", "visio", "publisher"), "Microsoft Office", "Productivity", 0.92),

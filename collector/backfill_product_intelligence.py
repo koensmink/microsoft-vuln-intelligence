@@ -1,9 +1,10 @@
 import os
 import sys
+import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import create_engine, text
 from collector.app.product_intelligence import RAW_PRODUCT_NAME_COLUMN, upsert_product_mapping
 
@@ -12,8 +13,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./dev.db")
 def utcnow():
     return datetime.now(timezone.utc)
 
-def backfill() -> dict[str, int]:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+def backfill(database_url: str | None = None) -> dict[str, int]:
+    """Backfill Product Intelligence from products.name onto every CVE/product link.
+
+    The join intentionally uses cve_products.product_id -> products.id because
+    cve_products.product_id is the database primary key reference, not the raw
+    MSRC product identifier stored in products.product_id.
+    """
+    engine = create_engine(database_url or DATABASE_URL, pool_pre_ping=True)
     counts = {"products_seen": 0, "links_updated": 0, "mappings_upserted": 0}
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
@@ -34,4 +41,7 @@ def backfill() -> dict[str, int]:
     return counts
 
 if __name__ == "__main__":
-    print(backfill())
+    parser = argparse.ArgumentParser(description="Backfill Product Intelligence for existing cve_products rows.")
+    parser.add_argument("--database-url", default=DATABASE_URL, help="SQLAlchemy database URL. Defaults to DATABASE_URL or ./dev.db.")
+    args = parser.parse_args()
+    print(backfill(args.database_url))
