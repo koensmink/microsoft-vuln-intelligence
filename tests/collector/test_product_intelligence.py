@@ -5,7 +5,20 @@ from sqlalchemy import create_engine, text
 from app.db.base import Base
 from app import models  # noqa: F401
 from collector.app import sync
+from collector.app.product_intelligence import map_product_name
 from collector import backfill_product_intelligence
+
+
+def test_product_name_classifier_returns_meaningful_microsoft_families() -> None:
+    examples = {
+        "Windows Server 2025": "Windows Server",
+        "Dynamics 365 Sales": "Dynamics 365",
+        "Microsoft Office LTSC": "Microsoft Office",
+        "Azure Kubernetes Service": "Azure Kubernetes Service",
+    }
+
+    for raw_name, expected_family in examples.items():
+        assert map_product_name(raw_name).product_family == expected_family
 
 
 def test_sync_maps_products_from_persisted_product_name() -> None:
