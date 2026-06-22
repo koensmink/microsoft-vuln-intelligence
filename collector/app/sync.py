@@ -103,7 +103,7 @@ def normalize_release(update: dict) -> dict:
 
 
 from .cvrf_parser import parse_cvrf
-from .product_intelligence import map_product_name
+from .product_intelligence import upsert_product_mapping
 
 
 def _row_mapping(row):
@@ -160,19 +160,22 @@ def sync_parsed_release(conn, parsed: dict, update: dict | None = None) -> dict[
     counts["releases_updated"] += int(updated or (not added))
 
     product_db_ids = {}
+    product_raw_names = {}
     for product in parsed.get("products", {}).values():
         existing = _row_mapping(conn.execute(text("SELECT * FROM products WHERE product_id = :product_id"), {"product_id": product["product_id"]}).first())
-        product_db_ids[product["product_id"]] = conn.execute(
+        product_row = conn.execute(
             text(
                 """
                 INSERT INTO products (product_id, name, cpe, family, created_at, updated_at)
                 VALUES (:product_id, :name, :cpe, :family, :created_at, :updated_at)
                 ON CONFLICT (product_id) DO UPDATE SET name = EXCLUDED.name, cpe = EXCLUDED.cpe, family = EXCLUDED.family, updated_at = EXCLUDED.updated_at
-                RETURNING id
+                RETURNING id, name
                 """
             ),
             {**product, "created_at": utcnow(), "updated_at": utcnow()},
-        ).scalar_one()
+        ).mappings().one()
+        product_db_ids[product["product_id"]] = product_row["id"]
+        product_raw_names[product["product_id"]] = product_row["name"]
         counts["products_added"] += int(existing is None)
         counts["products_updated"] += int(existing is not None and _changed(existing, product, ["name", "cpe", "family"]))
 
@@ -194,16 +197,13 @@ def sync_parsed_release(conn, parsed: dict, update: dict | None = None) -> dict[
 
         for pid, product in cve.get("products", {}).items():
             if pid not in product_db_ids:
-                product_db_ids[pid] = conn.execute(text("INSERT INTO products (product_id, name, cpe, family, created_at, updated_at) VALUES (:product_id, :name, :cpe, :family, :created_at, :updated_at) ON CONFLICT (product_id) DO UPDATE SET name = EXCLUDED.name, updated_at = EXCLUDED.updated_at RETURNING id"), {"product_id": pid, "name": product.get("name") or pid, "cpe": product.get("cpe"), "family": product.get("family"), "created_at": utcnow(), "updated_at": utcnow()}).scalar_one()
+                product_row = conn.execute(text("INSERT INTO products (product_id, name, cpe, family, created_at, updated_at) VALUES (:product_id, :name, :cpe, :family, :created_at, :updated_at) ON CONFLICT (product_id) DO UPDATE SET name = EXCLUDED.name, cpe = EXCLUDED.cpe, family = EXCLUDED.family, updated_at = EXCLUDED.updated_at RETURNING id, name"), {"product_id": pid, "name": product.get("name") or pid, "cpe": product.get("cpe"), "family": product.get("family"), "created_at": utcnow(), "updated_at": utcnow()}).mappings().one()
+                product_db_ids[pid] = product_row["id"]
+                product_raw_names[pid] = product_row["name"]
             pdata = cve.get("product_data", {}).get(pid, {})
             existing_link = _row_mapping(conn.execute(text("SELECT * FROM cve_products WHERE cve_id = :cve_id AND product_id = :product_id"), {"cve_id": cve_db_id, "product_id": product_db_ids[pid]}).first())
-            raw_name = product.get("name") or pid
-            mapping = map_product_name(raw_name)
-            conn.execute(text("""
-                INSERT INTO product_mappings (raw_name, product_family, product_category, confidence, source, created_at, updated_at)
-                VALUES (:raw_name, :product_family, :product_category, :confidence, :source, :created_at, :updated_at)
-                ON CONFLICT (raw_name) DO UPDATE SET product_family = EXCLUDED.product_family, product_category = EXCLUDED.product_category, confidence = EXCLUDED.confidence, source = EXCLUDED.source, updated_at = EXCLUDED.updated_at
-            """), {"raw_name": raw_name, "product_family": mapping.product_family, "product_category": mapping.product_category, "confidence": mapping.confidence, "source": mapping.source, "created_at": utcnow(), "updated_at": utcnow()})
+            raw_name = product_raw_names.get(pid) or product.get("name") or pid
+            mapping = upsert_product_mapping(conn, raw_name)
             link_values = {"cve_id": cve_db_id, "product_id": product_db_ids[pid], "status": pdata.get("status"), "severity": pdata.get("severity"), "impact": pdata.get("impact"), "cvss_base_score": pdata.get("cvss_base_score"), "cvss_temporal_score": pdata.get("cvss_temporal_score"), "cvss_vector": pdata.get("cvss_vector"), "exploited": cve.get("exploited", False), "publicly_disclosed": cve.get("publicly_disclosed", False), "product_family": mapping.product_family, "product_category": mapping.product_category}
             conn.execute(text("""
                 INSERT INTO cve_products (cve_id, product_id, status, severity, impact, cvss_base_score, cvss_temporal_score, cvss_vector, exploited, publicly_disclosed, product_family, product_category, created_at, updated_at)

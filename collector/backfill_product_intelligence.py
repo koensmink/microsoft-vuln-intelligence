@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sqlalchemy import create_engine, text
-from app.product_intelligence import map_product_name
+from collector.app.product_intelligence import RAW_PRODUCT_NAME_COLUMN, upsert_product_mapping
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./dev.db")
 
@@ -16,24 +16,14 @@ def backfill() -> dict[str, int]:
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
     counts = {"products_seen": 0, "links_updated": 0, "mappings_upserted": 0}
     with engine.begin() as conn:
-        rows = conn.execute(text("""
-            SELECT cp.id AS link_id, p.name AS raw_name
+        rows = conn.execute(text(f"""
+            SELECT cp.id AS link_id, p.{RAW_PRODUCT_NAME_COLUMN} AS raw_name
             FROM cve_products cp JOIN products p ON p.id = cp.product_id
         """)).mappings().all()
         for row in rows:
             raw_name = row["raw_name"] or ""
-            mapping = map_product_name(raw_name)
+            mapping = upsert_product_mapping(conn, raw_name)
             counts["products_seen"] += 1
-            conn.execute(text("""
-                INSERT INTO product_mappings (raw_name, product_family, product_category, confidence, source, created_at, updated_at)
-                VALUES (:raw_name, :product_family, :product_category, :confidence, :source, :created_at, :updated_at)
-                ON CONFLICT (raw_name) DO UPDATE SET
-                    product_family = EXCLUDED.product_family,
-                    product_category = EXCLUDED.product_category,
-                    confidence = EXCLUDED.confidence,
-                    source = EXCLUDED.source,
-                    updated_at = EXCLUDED.updated_at
-            """), {"raw_name": raw_name, "product_family": mapping.product_family, "product_category": mapping.product_category, "confidence": mapping.confidence, "source": mapping.source, "created_at": utcnow(), "updated_at": utcnow()})
             result = conn.execute(text("""
                 UPDATE cve_products
                 SET product_family = :product_family, product_category = :product_category, updated_at = :updated_at
