@@ -24,6 +24,8 @@ class CveProductOut(BaseModel):
     cvss_vector: str | None = None
     exploited: bool
     publicly_disclosed: bool
+    product_family: str | None = None
+    product_category: str | None = None
 
 
 AffectedProductOut = CveProductOut
@@ -134,6 +136,37 @@ class StatsTimeseriesPointOut(BaseModel):
     average_cvss_score: float | None = None
 
 
+class ProductSummaryOut(BaseModel):
+    product_family: str
+    product_category: str
+    cve_count: int
+    critical_count: int = 0
+    kev_count: int = 0
+    high_epss_count: int = 0
+    average_cvss_score: float | None = None
+
+
+class ProductCategoryOut(BaseModel):
+    product_category: str
+    cve_count: int
+    critical_count: int = 0
+    kev_count: int = 0
+    high_epss_count: int = 0
+    average_cvss_score: float | None = None
+
+
+class ProductMappingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    raw_name: str
+    product_family: str | None = None
+    product_category: str | None = None
+    confidence: float | None = None
+    source: str = "rule"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class StatsOut(BaseModel):
     total_cves: int
     total_products: int
@@ -162,6 +195,8 @@ class StatsOut(BaseModel):
     kev_distribution: list[CountBucketOut] = []
     cvss_score_distribution: list[CountBucketOut] = []
     kev_cves: list[KevCveOut] = []
+    top_product_families: list[ProductSummaryOut] = []
+    top_product_categories: list[ProductCategoryOut] = []
 
 
 class SyncRequest(BaseModel):

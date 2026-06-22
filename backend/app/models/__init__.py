@@ -1,1 +1,1 @@
-from app.models.entities import AffectedProduct, Cve, CveEnrichment, CveProduct, Product, Release, Remediation, SyncRun
+from app.models.entities import AffectedProduct, Cve, CveEnrichment, CveProduct, Product, ProductMapping, Release, Remediation, SyncRun
