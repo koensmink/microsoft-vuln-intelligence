@@ -172,19 +172,15 @@ def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
             headers={"Authorization": f"Bearer {settings.openai_api_key}"},
             json=body,
         )
-try:
 
-    response.raise_for_status()
-
-except httpx.HTTPStatusError:
-
-    logger.error("OpenAI error response: %s", response.text)
-
-    raise
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        logger.error("OpenAI error response: %s", response.text)
+        raise
 
     content = response.json()["choices"][0]["message"]["content"]
     return validate_ai_context(json.loads(content))
-
 
 def upsert_ai_context(
     db: Session,
