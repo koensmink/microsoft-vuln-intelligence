@@ -103,6 +103,13 @@ class CveDetailOut(CveOut):
     enrichments: list[CveEnrichmentOut] = []
 
 
+class PowerShellCheckOut(BaseModel):
+    title: str
+    command: str
+    explanation: str
+    applies_to: str
+
+
 class CveAiContextOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -117,6 +124,9 @@ class CveAiContextOut(BaseModel):
     technical_context: str
     confidence: str
     limitations: list[str]
+    how_to_check: list[str] = []
+    powershell_checks: list[PowerShellCheckOut] = []
+    verification_notes: list[str] = []
     source_hash: str
     created_at: datetime | None = None
     updated_at: datetime | None = None

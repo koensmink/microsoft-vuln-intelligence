@@ -293,6 +293,16 @@ def test_ai_context_generate_requires_valid_admin_key(monkeypatch) -> None:
             "technical_context": "Technische context.",
             "confidence": "medium",
             "limitations": ["Beperkte brondata"],
+            "how_to_check": ["Controleer of het product aanwezig is."],
+            "powershell_checks": [
+                {
+                    "title": "Windows inventarisatie",
+                    "command": "Get-ComputerInfo",
+                    "explanation": "Toont basisinformatie over het systeem.",
+                    "applies_to": "Windows",
+                }
+            ],
+            "verification_notes": ["Gebruik officiële remediation-data voor patchstatus."],
         }
 
     monkeypatch.setattr(settings, "ai_admin_api_key", "secret")
@@ -321,4 +331,8 @@ def test_ai_context_generate_requires_valid_admin_key(monkeypatch) -> None:
     assert invalid_response.status_code == 403
     assert invalid_response.json()["detail"] == "Invalid AI admin key"
     assert valid_response.status_code == 200
-    assert valid_response.json()["plain_summary"] == "Samenvatting."
+    valid_body = valid_response.json()
+    assert valid_body["plain_summary"] == "Samenvatting."
+    assert valid_body["how_to_check"] == ["Controleer of het product aanwezig is."]
+    assert valid_body["powershell_checks"][0]["command"] == "Get-ComputerInfo"
+    assert valid_body["verification_notes"] == ["Gebruik officiële remediation-data voor patchstatus."]
