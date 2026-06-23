@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -7,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import Cve, CveEnrichment, CveProduct, Product
+from app.models import Cve, CveEnrichment, CveProduct, Product, Release
 from backend.app.main import app
 
 
@@ -87,6 +88,67 @@ def test_list_cves_filters_by_impact() -> None:
         "CVE-2026-0004",
     }
     assert {cve["impact"] for cve in unknown_response.json()} == {"Unknown", None}
+
+
+def test_products_monthly_delta_counts_distinct_cves() -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        current = Release(release_name="2026-Jun", release_date=datetime(2026, 6, 11))
+        previous = Release(release_name="2026-May", release_date=datetime(2026, 5, 13))
+        product_a = Product(product_id="p-a", name="Product A")
+        product_b = Product(product_id="p-b", name="Product B")
+        db.add_all([current, previous, product_a, product_b])
+        db.flush()
+
+        current_cve = Cve(cve_id="CVE-2026-0201", title="Current", release_id=current.id)
+        previous_cve = Cve(cve_id="CVE-2026-0101", title="Previous", release_id=previous.id)
+        db.add_all([current_cve, previous_cve])
+        db.flush()
+        db.add_all(
+            [
+                CveProduct(cve_id=current_cve.id, product_id=product_a.id, product_family="Windows", product_category="Operating Systems", severity="Critical"),
+                CveProduct(cve_id=current_cve.id, product_id=product_b.id, product_family="Windows", product_category="Operating Systems", severity="Critical"),
+                CveProduct(cve_id=previous_cve.id, product_id=product_a.id, product_family="Windows", product_category="Operating Systems", severity="Important"),
+                CveEnrichment(cve_id=current_cve.id, source="kev", kev_known_exploited=True),
+                CveEnrichment(cve_id=current_cve.id, source="epss", epss_score=0.25),
+            ]
+        )
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        default_response = client.get("/api/v1/products/monthly-delta")
+        explicit_response = client.get(
+            "/api/v1/products/monthly-delta",
+            params={"current_release": "2026-Jun", "previous_release": "2026-May", "limit": 25},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert default_response.status_code == 200
+    assert explicit_response.status_code == 200
+    row = default_response.json()[0]
+    assert row["product_family"] == "Windows"
+    assert row["product_category"] == "Operating Systems"
+    assert row["current_cve_count"] == 1
+    assert row["previous_cve_count"] == 1
+    assert row["delta_cve_count"] == 0
+    assert row["delta_critical_count"] == 1
+    assert row["delta_kev_count"] == 1
+    assert row["delta_high_epss_count"] == 1
+    assert row["delta_priority_score"] == 50
+    assert explicit_response.json() == default_response.json()
 
 
 def test_product_rollup_endpoints_return_truthy_counts() -> None:

@@ -13,6 +13,7 @@ from app.schemas import (
     CveOut,
     ProductCategoryOut,
     ProductMappingOut,
+    ProductMonthlyDeltaOut,
     ProductOut,
     ProductRiskRankingOut,
     ProductSummaryOut,
@@ -89,6 +90,107 @@ def _product_rollup(db: Session, group_fields: list, release: str | None = None,
         results.append(result)
     results.sort(key=lambda item: item["cve_count"], reverse=True)
     return results[:limit] if limit else results
+
+
+def _latest_release_pair(db: Session, current_release: str | None, previous_release: str | None):
+    if current_release and previous_release:
+        return current_release, previous_release
+
+    releases = db.execute(
+        select(Release.release_name)
+        .where(Release.release_date.is_not(None))
+        .order_by(Release.release_date.desc(), Release.release_name.desc())
+    ).scalars().all()
+    if len(releases) < 2:
+        return None, None
+
+    current = current_release or releases[0]
+    if current not in releases:
+        return None, None
+
+    if previous_release:
+        return current, previous_release
+
+    current_index = releases.index(current)
+    if current_index + 1 >= len(releases):
+        return None, None
+    return current, releases[current_index + 1]
+
+
+def _product_release_counts(db: Session, release_name: str):
+    rows = db.execute(
+        select(
+            func.coalesce(CveProduct.product_family, "Unknown").label("product_family"),
+            func.coalesce(CveProduct.product_category, "Unknown").label("product_category"),
+            Cve.id.label("cve_pk"),
+            func.max(case((CveProduct.severity == "Critical", 1), else_=0)).label("is_critical"),
+            func.max(case((CveEnrichment.kev_known_exploited.is_(True), 1), else_=0)).label("is_kev"),
+            func.max(case((CveEnrichment.epss_score >= 0.10, 1), else_=0)).label("is_high_epss"),
+        )
+        .select_from(CveProduct)
+        .join(Cve)
+        .join(Release)
+        .outerjoin(Cve.enrichments)
+        .where(Release.release_name == release_name)
+        .group_by(CveProduct.product_family, CveProduct.product_category, Cve.id)
+    ).all()
+    counts = {}
+    for row in rows:
+        key = (row.product_family or "Unknown", row.product_category or "Unknown")
+        item = counts.setdefault(key, {"cves": set(), "critical": 0, "kev": 0, "epss": 0})
+        item["cves"].add(row.cve_pk)
+        item["critical"] += int(bool(row.is_critical))
+        item["kev"] += int(bool(row.is_kev))
+        item["epss"] += int(bool(row.is_high_epss))
+    return counts
+
+
+def _product_monthly_delta(db: Session, current_release: str | None, previous_release: str | None, limit: int):
+    current, previous = _latest_release_pair(db, current_release, previous_release)
+    if not current or not previous:
+        return []
+
+    current_counts = _product_release_counts(db, current)
+    previous_counts = _product_release_counts(db, previous)
+    keys = set(current_counts) | set(previous_counts)
+    rows = []
+    empty = {"cves": set(), "critical": 0, "kev": 0, "epss": 0}
+    for product_family, product_category in keys:
+        current_item = current_counts.get((product_family, product_category), empty)
+        previous_item = previous_counts.get((product_family, product_category), empty)
+        current_cve_count = len(current_item["cves"])
+        previous_cve_count = len(previous_item["cves"])
+        delta_cve_count = current_cve_count - previous_cve_count
+        delta_critical_count = current_item["critical"] - previous_item["critical"]
+        delta_kev_count = current_item["kev"] - previous_item["kev"]
+        delta_high_epss_count = current_item["epss"] - previous_item["epss"]
+        delta_priority_score = (
+            delta_cve_count
+            + (delta_critical_count * 10)
+            + (delta_kev_count * 25)
+            + (delta_high_epss_count * 15)
+        )
+        rows.append({
+            "product_family": product_family,
+            "product_category": product_category,
+            "current_release": current,
+            "previous_release": previous,
+            "current_cve_count": current_cve_count,
+            "previous_cve_count": previous_cve_count,
+            "delta_cve_count": delta_cve_count,
+            "current_critical_count": current_item["critical"],
+            "previous_critical_count": previous_item["critical"],
+            "delta_critical_count": delta_critical_count,
+            "current_kev_count": current_item["kev"],
+            "previous_kev_count": previous_item["kev"],
+            "delta_kev_count": delta_kev_count,
+            "current_high_epss_count": current_item["epss"],
+            "previous_high_epss_count": previous_item["epss"],
+            "delta_high_epss_count": delta_high_epss_count,
+            "delta_priority_score": delta_priority_score,
+        })
+    rows.sort(key=lambda item: item["delta_priority_score"], reverse=True)
+    return rows[:limit]
 
 
 def _risk_level(risk_score: float) -> str:
@@ -274,6 +376,16 @@ def products_categories(db: Session = Depends(get_db), release: str | None = Non
 @router.get("/products/risk-ranking", response_model=list[ProductRiskRankingOut])
 def products_risk_ranking(db: Session = Depends(get_db), limit: int = Query(10, ge=1, le=50)):
     return _product_risk_ranking(db, limit)
+
+
+@router.get("/products/monthly-delta", response_model=list[ProductMonthlyDeltaOut])
+def products_monthly_delta(
+    db: Session = Depends(get_db),
+    current_release: str | None = None,
+    previous_release: str | None = None,
+    limit: int = Query(10, ge=1, le=50),
+):
+    return _product_monthly_delta(db, current_release, previous_release, limit)
 
 
 @router.get("/products/mappings", response_model=list[ProductMappingOut])

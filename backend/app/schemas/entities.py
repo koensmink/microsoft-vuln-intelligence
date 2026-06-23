@@ -155,6 +155,26 @@ class ProductCategoryOut(BaseModel):
     average_cvss_score: float | None = None
 
 
+class ProductMonthlyDeltaOut(BaseModel):
+    product_family: str
+    product_category: str
+    current_release: str
+    previous_release: str
+    current_cve_count: int
+    previous_cve_count: int
+    delta_cve_count: int
+    current_critical_count: int
+    previous_critical_count: int
+    delta_critical_count: int
+    current_kev_count: int
+    previous_kev_count: int
+    delta_kev_count: int
+    current_high_epss_count: int
+    previous_high_epss_count: int
+    delta_high_epss_count: int
+    delta_priority_score: int
+
+
 class ProductRiskRankingOut(ProductSummaryOut):
     average_cvss_score: float = 0
     risk_score: float
