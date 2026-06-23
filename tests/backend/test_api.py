@@ -130,6 +130,8 @@ def test_product_rollup_endpoints_return_truthy_counts() -> None:
         stats_response = client.get("/api/v1/stats")
         summary_response = client.get("/api/v1/products/summary")
         categories_response = client.get("/api/v1/products/categories")
+        risk_response = client.get("/api/v1/products/risk-ranking")
+        invalid_risk_limit_response = client.get("/api/v1/products/risk-ranking", params={"limit": 51})
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
@@ -137,6 +139,8 @@ def test_product_rollup_endpoints_return_truthy_counts() -> None:
     assert stats_response.status_code == 200
     assert summary_response.status_code == 200
     assert categories_response.status_code == 200
+    assert risk_response.status_code == 200
+    assert invalid_risk_limit_response.status_code == 422
 
     stats = stats_response.json()
     assert stats["top_product_families"][0]["critical_count"] == 1
@@ -155,3 +159,13 @@ def test_product_rollup_endpoints_return_truthy_counts() -> None:
     assert categories[0]["critical_count"] == 1
     assert categories[0]["kev_count"] == 1
     assert categories[0]["high_epss_count"] == 1
+
+    risk_ranking = risk_response.json()
+    assert risk_ranking[0]["product_family"] == "Windows"
+    assert risk_ranking[0]["product_category"] == "Operating Systems"
+    assert risk_ranking[0]["critical_count"] == 1
+    assert risk_ranking[0]["kev_count"] == 1
+    assert risk_ranking[0]["high_epss_count"] == 1
+    assert risk_ranking[0]["average_cvss_score"] == 9.8
+    assert risk_ranking[0]["risk_score"] == 69.6
+    assert risk_ranking[0]["risk_level"] == "Low"
