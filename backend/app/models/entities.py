@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -40,6 +40,7 @@ class Cve(Base):
     product_links: Mapped[list["CveProduct"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
     remediations: Mapped[list["Remediation"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
     enrichments: Mapped[list["CveEnrichment"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
+    ai_contexts: Mapped[list["CveAiContext"]] = relationship(back_populates="cve", cascade="all, delete-orphan")
 
     @property
     def affected_products(self) -> list["CveProduct"]:
@@ -212,6 +213,29 @@ class CveEnrichment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     cve: Mapped[Cve] = relationship(back_populates="enrichments")
+
+
+class CveAiContext(Base):
+    __tablename__ = "cve_ai_context"
+    __table_args__ = (UniqueConstraint("cve_id", "language"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cve_id: Mapped[int] = mapped_column(ForeignKey("cves.id"), index=True)
+    language: Mapped[str] = mapped_column(String(8), default="nl", index=True)
+    model: Mapped[str] = mapped_column(String(128))
+    plain_summary: Mapped[str] = mapped_column(Text)
+    business_impact: Mapped[str] = mapped_column(Text)
+    who_should_act: Mapped[list] = mapped_column(JSON)
+    what_to_check: Mapped[list] = mapped_column(JSON)
+    recommended_action: Mapped[str] = mapped_column(Text)
+    technical_context: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[str] = mapped_column(String(64))
+    limitations: Mapped[list] = mapped_column(JSON)
+    source_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cve: Mapped[Cve] = relationship(back_populates="ai_contexts")
 
 
 class SyncRun(Base):

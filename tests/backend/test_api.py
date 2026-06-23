@@ -231,3 +231,34 @@ def test_product_rollup_endpoints_return_truthy_counts() -> None:
     assert risk_ranking[0]["average_cvss_score"] == 9.8
     assert risk_ranking[0]["risk_score"] == 69.6
     assert risk_ranking[0]["risk_level"] == "Low"
+
+
+def test_ai_context_empty_and_missing_key_generate() -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        cve = Cve(cve_id="CVE-2026-9999", title="AI context test")
+        db.add(cve)
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        empty_response = client.get("/api/v1/cves/CVE-2026-9999/ai-context")
+        missing_key_response = client.post("/api/v1/cves/CVE-2026-9999/ai-context/generate")
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert empty_response.status_code == 404
+    assert empty_response.json()["detail"] == "AI context not generated"
+    assert missing_key_response.status_code == 503
+    assert "OPENAI_API_KEY" in missing_key_response.json()["detail"]
