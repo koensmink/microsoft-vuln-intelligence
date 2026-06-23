@@ -19,6 +19,7 @@ REQUIRED_TEXT_FIELDS = [
     "confidence",
 ]
 REQUIRED_LIST_FIELDS = ["who_should_act", "what_to_check", "limitations"]
+OPTIONAL_LIST_FIELDS = ["how_to_check", "powershell_checks", "verification_notes"]
 
 
 def load_cve_for_ai(db: Session, cve_id: str) -> Cve | None:
@@ -99,6 +100,19 @@ def validate_ai_context(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(data.get(field), list):
             raise ValueError(f"OpenAI response missing required list field: {field}")
 
+    for field in OPTIONAL_LIST_FIELDS:
+        if field not in data:
+            data[field] = []
+        if not isinstance(data.get(field), list):
+            raise ValueError(f"OpenAI response field must be a list: {field}")
+
+    for index, check in enumerate(data["powershell_checks"]):
+        if not isinstance(check, dict):
+            raise ValueError("OpenAI response powershell_checks entries must be objects")
+        for field in ["title", "command", "explanation", "applies_to"]:
+            if not isinstance(check.get(field), str):
+                raise ValueError(f"OpenAI response powershell_checks[{index}] missing string field: {field}")
+
     allowed_confidence = {"low", "medium", "high"}
     if data.get("confidence") not in allowed_confidence:
         raise ValueError("OpenAI response has invalid confidence value")
@@ -141,7 +155,10 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "confidence,\n"
                 "who_should_act,\n"
                 "what_to_check,\n"
-                "limitations.\n\n"
+                "limitations,\n"
+                "how_to_check,\n"
+                "powershell_checks,\n"
+                "verification_notes.\n\n"
                 "Gebruik de velden als volgt:\n"
                 "plain_summary = Leg in gewone taal uit wat er aan de hand is.\n"
                 "business_impact = Beantwoord waarom dit belangrijk is, wat er kan gebeuren als we niets doen, "
@@ -151,6 +168,15 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "who_should_act = Lijst van teams of rollen die waarschijnlijk verantwoordelijk zijn.\n"
                 "what_to_check = Concrete controlepunten die iemand direct kan nalopen.\n"
                 "limitations = Welke informatie ontbreekt waardoor onzekerheid bestaat.\n"
+                "how_to_check = Praktische, defensieve stappen om te bepalen of het getroffen product aanwezig is of aandacht nodig heeft.\n"
+                "powershell_checks = Een lijst met objecten met exact deze stringvelden: title, command, explanation, applies_to. "
+                "Gebruik alleen defensieve inventarisatie- of statuscontroles. Geef geen exploit-instructies. "
+                "Gebruik alleen PowerShell-controles die betrouwbaar passen bij de aangeleverde productdata. "
+                "Voorbeelden van toegestane controles zijn Get-MpComputerStatus voor Defender, Get-HotFix en Get-ComputerInfo voor Windows/Windows Server, "
+                "Get-ItemProperty op standaard browser-uninstall-paden voor Edge, Get-ExchangeServer | Format-List Name,Edition,AdminDisplayVersion voor Exchange, "
+                "en Get-SPFarm | Select BuildVersion voor SharePoint. Verzin geen KB-nummers, registry keys, mitigaties of productversies. "
+                "Als er geen betrouwbare PowerShell-controle kan worden afgeleid uit de brondata, geef powershell_checks terug als een lege array.\n"
+                "verification_notes = Korte notities over beperkingen bij verificatie, bijvoorbeeld dat update- of versievergelijking alleen kan met officiële remediation-data in de bron.\n"
                 "confidence moet uitsluitend zijn: low, medium of high.\n\n"
                 "Schrijf alsof je een manager helpt begrijpen wat deze kwetsbaarheid betekent zonder security-achtergrond.\n\n"
                 f"CVE-data: {json.dumps(payload, ensure_ascii=False, default=str)}"
@@ -202,8 +228,8 @@ def upsert_ai_context(
     context.model = settings.openai_model
     context.source_hash = source_hash_value
 
-    for field in REQUIRED_TEXT_FIELDS + REQUIRED_LIST_FIELDS:
-        setattr(context, field, payload[field])
+    for field in REQUIRED_TEXT_FIELDS + REQUIRED_LIST_FIELDS + OPTIONAL_LIST_FIELDS:
+        setattr(context, field, payload.get(field, []))
 
     if not existing:
         db.add(context)
