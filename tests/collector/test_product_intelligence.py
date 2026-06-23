@@ -21,6 +21,21 @@ def test_product_name_classifier_returns_meaningful_microsoft_families() -> None
         assert map_product_name(raw_name).product_family == expected_family
 
 
+def test_product_name_classifier_handles_versioned_windows_and_framework_edges() -> None:
+    examples = {
+        "Windows 11 Version 26H1 for x64-based Systems - extra": ("Windows 11", "Operating System"),
+        "Windows 10 Version 22H2 for x64-based Systems": ("Windows 10", "Operating System"),
+        "Microsoft .NET Framework 3.5 AND 4.8.1 on Windows 11 Version 22H2 for x64-based Systems": (".NET", "Runtime / Framework"),
+        "Microsoft .NET Framework 3.5 AND 4.8.1 on Windows 11 Version 26H1 for x64-based Systems - extra": (".NET", "Runtime / Framework"),
+        "Microsoft .NET Framework 3.5 AND 4.8 on Windows 11 version 21H2 for ARM64-based Systems": (".NET", "Runtime / Framework"),
+    }
+
+    for raw_name, (expected_family, expected_category) in examples.items():
+        mapping = map_product_name(raw_name)
+        assert mapping.product_family == expected_family
+        assert mapping.product_category == expected_category
+
+
 def test_sync_maps_products_from_persisted_product_name() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
