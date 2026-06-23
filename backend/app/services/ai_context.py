@@ -111,49 +111,52 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
         {
             "role": "system",
             "content": (
-                "Je bent een senior vulnerability analyst. "
-                "Je vertaalt technische CVE-informatie naar begrijpelijke Nederlandse uitleg voor niet-security stakeholders. "
-                "Gebruik uitsluitend de aangeleverde CVE-data. "
-                "Verzin nooit exploitdetails, getroffen producten, mitigaties, workarounds, aanvalspaden of business impact. "
-                "Maak geen aannames over de omgeving van de lezer. "
-                "Als informatie ontbreekt, zeg dat expliciet. "
-                "Claim alleen actieve uitbuiting als kev_known_exploited, exploited of publicly_disclosed dit ondersteunt. "
-                "Noem KEV alleen als kev_known_exploited true is. "
-                "Noem publieke bekendheid alleen als publicly_disclosed true is. "
-                "Gebruik zakelijke, rustige taal. Geen marketingtaal. Geen sensatie. "
-                "Schrijf op B1/B2-niveau, maar behoud technische juistheid. "
-                "Geef uitsluitend geldige JSON terug. Geen markdown. Geen extra tekst."
+                "Je bent een Microsoft security consultant die kwetsbaarheden uitlegt "
+                "aan niet-technische gebruikers. "
+                "De doelgroep bestaat uit IT-managers, projectmanagers, servicedeskmedewerkers, "
+                "functioneel beheerders en management. "
+                "Ga ervan uit dat de lezer geen kennis heeft van security-termen zoals "
+                "CVSS, EPSS, KEV, privilege escalation, remote code execution, attack vector "
+                "of remediation. "
+                "Gebruik uitsluitend informatie uit de aangeleverde CVE-data. "
+                "Verzin geen feiten. "
+                "Als informatie ontbreekt, benoem dat expliciet. "
+                "Vertaal technische informatie naar begrijpelijke taal. "
+                "Leg uit waarom iemand dit moet weten en wat er praktisch gedaan moet worden. "
+                "Noem CVSS, EPSS of KEV alleen als je ook uitlegt wat dat betekent. "
+                "Gebruik korte, duidelijke zinnen. "
+                "Vermijd security-jargon zoveel mogelijk. "
+                "Geef uitsluitend geldige JSON terug."
             ),
         },
         {
             "role": "user",
             "content": (
-                "Maak laagdrempelige context voor deze CVE. "
+                "Maak een begrijpelijke uitleg voor deze CVE. "
                 "Gebruik exact deze JSON velden:\n"
-                "{\n"
-                '  "plain_summary": "Korte uitleg in gewone taal. Maximaal 3 zinnen.",\n'
-                '  "business_impact": "Praktische betekenis voor een organisatie. Maximaal 3 zinnen.",\n'
-                '  "who_should_act": ["Lijst met teams of rollen die waarschijnlijk moeten kijken, gebaseerd op productdata."],\n'
-                '  "what_to_check": ["Concrete controlepunten op basis van de aangeleverde data. Geen verzonnen mitigaties."],\n'
-                '  "recommended_action": "Kort advies op basis van severity, CVSS, EPSS, KEV, exploited en publicly_disclosed.",\n'
-                '  "technical_context": "Korte uitleg van severity, CVSS, EPSS, KEV en disclosure-status.",\n'
-                '  "confidence": "low | medium | high",\n'
-                '  "limitations": ["Welke informatie ontbreekt of onzeker is."]\n'
-                "}\n\n"
-                "Regels voor interpretatie:\n"
-                "- Als kev_known_exploited true is: benoem dat deze CVE in CISA KEV staat.\n"
-                "- Als exploited true is: benoem dat uitbuiting is gemarkeerd in de brondata.\n"
-                "- Als publicly_disclosed true is: benoem dat publieke bekendheid is gemarkeerd in de brondata.\n"
-                "- Als EPSS ontbreekt: zeg dat exploitkans niet beschikbaar is.\n"
-                "- Als CVSS ontbreekt: zeg dat technische ernstscore niet beschikbaar is.\n"
-                "- Als description ontbreekt: zeg dat inhoudelijke beschrijving beperkt is.\n"
-                "- Als affected_products leeg is: zeg dat getroffen producten niet bekend zijn in de beschikbare data.\n"
-                "- Adviseer patchen of controleren, maar verzin geen specifieke KB's, registry keys, workarounds of configuratiestappen.\n\n"
+                "plain_summary,\n"
+                "business_impact,\n"
+                "recommended_action,\n"
+                "technical_context,\n"
+                "confidence,\n"
+                "who_should_act,\n"
+                "what_to_check,\n"
+                "limitations.\n\n"
+                "Gebruik de velden als volgt:\n"
+                "plain_summary = Leg in gewone taal uit wat er aan de hand is.\n"
+                "business_impact = Beantwoord waarom dit belangrijk is, wat er kan gebeuren als we niets doen, "
+                "en hoe relevant dit is voor een gemiddelde organisatie.\n"
+                "recommended_action = Beschrijf de eerste concrete acties die een organisatie moet uitvoeren.\n"
+                "technical_context = Leg technische details uit in begrijpelijke taal. Gebruik geen jargon zonder uitleg.\n"
+                "who_should_act = Lijst van teams of rollen die waarschijnlijk verantwoordelijk zijn.\n"
+                "what_to_check = Concrete controlepunten die iemand direct kan nalopen.\n"
+                "limitations = Welke informatie ontbreekt waardoor onzekerheid bestaat.\n"
+                "confidence moet uitsluitend zijn: low, medium of high.\n\n"
+                "Schrijf alsof je een manager helpt begrijpen wat deze kwetsbaarheid betekent zonder security-achtergrond.\n\n"
                 f"CVE-data: {json.dumps(payload, ensure_ascii=False, default=str)}"
             ),
         },
     ]
-
 
 def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
     if not settings.openai_api_key:
