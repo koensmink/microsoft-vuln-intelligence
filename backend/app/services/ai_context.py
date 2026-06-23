@@ -162,7 +162,6 @@ def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
     body = {
         "model": settings.openai_model,
         "messages": _messages(payload),
-        "temperature": 0.2,
         "response_format": {"type": "json_object"},
     }
 
