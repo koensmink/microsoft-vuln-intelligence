@@ -4,6 +4,7 @@ from app.schemas.entities import (
     CveOut,
     ProductCategoryOut,
     ProductMappingOut,
+    ProductRiskRankingOut,
     ProductOut,
     ProductSummaryOut,
     ReleaseOut,

@@ -14,6 +14,7 @@ from app.schemas import (
     ProductCategoryOut,
     ProductMappingOut,
     ProductOut,
+    ProductRiskRankingOut,
     ProductSummaryOut,
     ReleaseOut,
     StatsOut,
@@ -88,6 +89,40 @@ def _product_rollup(db: Session, group_fields: list, release: str | None = None,
         results.append(result)
     results.sort(key=lambda item: item["cve_count"], reverse=True)
     return results[:limit] if limit else results
+
+
+def _risk_level(risk_score: float) -> str:
+    if risk_score >= 250:
+        return "Critical"
+    if risk_score >= 150:
+        return "High"
+    if risk_score >= 75:
+        return "Medium"
+    return "Low"
+
+
+def _product_risk_ranking(db: Session, limit: int = 10):
+    rows = _product_rollup(
+        db,
+        [
+            func.coalesce(CveProduct.product_family, "Unknown"),
+            func.coalesce(CveProduct.product_category, "Unknown"),
+        ],
+        limit=None,
+    )
+    for row in rows:
+        average_cvss_score = row["average_cvss_score"] or 0
+        risk_score = (
+            (row["critical_count"] * 10)
+            + (row["kev_count"] * 25)
+            + (row["high_epss_count"] * 15)
+            + (average_cvss_score * 2)
+        )
+        row["average_cvss_score"] = average_cvss_score
+        row["risk_score"] = risk_score
+        row["risk_level"] = _risk_level(risk_score)
+    rows.sort(key=lambda item: item["risk_score"], reverse=True)
+    return rows[:limit]
 
 
 @router.get("/health")
@@ -234,6 +269,11 @@ def products_summary(db: Session = Depends(get_db), release: str | None = None, 
 @router.get("/products/categories", response_model=list[ProductCategoryOut])
 def products_categories(db: Session = Depends(get_db), release: str | None = None, severity: str | None = None, kev: bool | None = None, min_epss: float | None = Query(None, ge=0, le=1), limit: int = Query(50, ge=1, le=100)):
     return _product_rollup(db, [func.coalesce(CveProduct.product_category, "Unknown")], release, severity, kev, min_epss, limit)
+
+
+@router.get("/products/risk-ranking", response_model=list[ProductRiskRankingOut])
+def products_risk_ranking(db: Session = Depends(get_db), limit: int = Query(10, ge=1, le=50)):
+    return _product_risk_ranking(db, limit)
 
 
 @router.get("/products/mappings", response_model=list[ProductMappingOut])

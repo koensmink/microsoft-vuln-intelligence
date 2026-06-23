@@ -155,6 +155,12 @@ class ProductCategoryOut(BaseModel):
     average_cvss_score: float | None = None
 
 
+class ProductRiskRankingOut(ProductSummaryOut):
+    average_cvss_score: float = 0
+    risk_score: float
+    risk_level: str
+
+
 class ProductMappingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
