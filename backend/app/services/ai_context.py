@@ -182,6 +182,8 @@ def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     content = response.json()["choices"][0]["message"]["content"]
+    logger.warning("OPENAI RAW RESPONSE:\n%s", content)
+    
     return validate_ai_context(json.loads(content))
 
 def upsert_ai_context(
