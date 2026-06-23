@@ -4,7 +4,7 @@ import AiContextPanel from "./AiContextPanel";
 type ProductRow = { id?: number | string; product?: { name?: string | null; product_id?: string | null } | null; severity?: string | null; impact?: string | null; cvss_base_score?: number | null; cvss_vector?: string | null; product_family?: string | null; product_category?: string | null };
 type RemediationRow = { id?: number | string; product?: { name?: string | null } | null; description?: string | null; url?: string | null; type?: string | null; sub_type?: string | null };
 type CveDetail = Record<string, any> & { cve_id: string; title?: string | null; description?: string | null; affected_products?: ProductRow[] | null; remediations?: RemediationRow[] | null };
-type AiContext = { plain_summary: string; business_impact: string; who_should_act: string[]; what_to_check: string[]; recommended_action: string; limitations: string[] };
+type AiContext = { plain_summary?: string | null; business_impact?: string | null; who_should_act?: string[] | null; what_to_check?: string[] | null; recommended_action?: string | null; technical_context?: string | null; limitations?: string[] | null; confidence?: string | number | null };
 function pct(value: number | null | undefined) { return value == null ? "—" : `${(value * 100).toFixed(1)}%`; }
 function score(value: number | null | undefined) { return value == null ? "—" : value.toFixed(1); }
 function Text({ value }: { value: unknown }) { return <>{typeof value === "string" && value.trim() ? value : "—"}</>; }
