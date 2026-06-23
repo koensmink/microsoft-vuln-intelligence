@@ -5,9 +5,11 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
+from app.services.ai_context import build_source_payload, generate_with_openai, load_cve_for_ai, source_hash, upsert_ai_context
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
-from app.models.entities import CveEnrichment, CveProduct
+from app.models.entities import CveAiContext, CveEnrichment, CveProduct
 from app.schemas import (
+    CveAiContextOut,
     CveDetailOut,
     CveEnrichmentOut,
     CveOut,
@@ -361,6 +363,53 @@ def get_cve(cve_id: str, db: Session = Depends(get_db)):
     if not cve:
         raise HTTPException(404, "CVE not found")
     return cve
+
+
+@router.get("/cves/{cve_id}/ai-context", response_model=CveAiContextOut)
+def get_cve_ai_context(cve_id: str, db: Session = Depends(get_db)):
+    cve = db.scalar(select(Cve).where(Cve.cve_id == cve_id))
+    if not cve:
+        raise HTTPException(404, "CVE not found")
+    context = db.scalar(
+        select(CveAiContext)
+        .where(CveAiContext.cve_id == cve.id, CveAiContext.language == "nl")
+        .order_by(CveAiContext.updated_at.desc())
+    )
+    if not context:
+        raise HTTPException(404, "AI context not generated")
+    return context
+
+
+@router.post("/cves/{cve_id}/ai-context/generate", response_model=CveAiContextOut)
+def generate_cve_ai_context(cve_id: str, force: bool = False, db: Session = Depends(get_db)):
+    cve = load_cve_for_ai(db, cve_id)
+    if not cve:
+        raise HTTPException(404, "CVE not found")
+
+    payload = build_source_payload(cve)
+    hash_value = source_hash(payload)
+    cached = db.scalar(
+        select(CveAiContext).where(
+            CveAiContext.cve_id == cve.id,
+            CveAiContext.language == "nl",
+            CveAiContext.source_hash == hash_value,
+        )
+    )
+    if cached and not force:
+        return cached
+
+    try:
+        generated = generate_with_openai(payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception("Failed to generate AI context for %s", cve_id)
+        raise HTTPException(status_code=502, detail="Failed to generate AI context") from exc
+
+    return upsert_ai_context(db, cve, generated, hash_value)
 
 
 @router.get("/products/summary", response_model=list[ProductSummaryOut])

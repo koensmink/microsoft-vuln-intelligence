@@ -1,4 +1,5 @@
 from app.schemas.entities import (
+    CveAiContextOut,
     CveDetailOut,
     CveEnrichmentOut,
     CveOut,

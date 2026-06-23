@@ -103,6 +103,25 @@ class CveDetailOut(CveOut):
     enrichments: list[CveEnrichmentOut] = []
 
 
+class CveAiContextOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cve_id: int
+    language: str = "nl"
+    model: str
+    plain_summary: str
+    business_impact: str
+    who_should_act: list[str]
+    what_to_check: list[str]
+    recommended_action: str
+    technical_context: str
+    confidence: str
+    limitations: list[str]
+    source_hash: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class TopEpssCveOut(BaseModel):
     cve_id: str
     title: str | None = None
