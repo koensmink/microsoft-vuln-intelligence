@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.services.ai_context import build_source_payload, generate_with_openai, load_cve_for_ai, source_hash, upsert_ai_context
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
@@ -26,6 +27,13 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1")
+
+
+def require_ai_admin_key(x_ai_admin_key: str | None = Header(default=None, alias="X-AI-Admin-Key")) -> None:
+    if not settings.ai_admin_api_key:
+        raise HTTPException(status_code=503, detail="AI admin key is not configured")
+    if x_ai_admin_key != settings.ai_admin_api_key:
+        raise HTTPException(status_code=403, detail="Invalid AI admin key")
 
 
 def _filtered_cve_ids_subquery(release: str | None, severity: str | None, kev: bool | None, min_epss: float | None):
@@ -381,7 +389,12 @@ def get_cve_ai_context(cve_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/cves/{cve_id}/ai-context/generate", response_model=CveAiContextOut)
-def generate_cve_ai_context(cve_id: str, force: bool = False, db: Session = Depends(get_db)):
+def generate_cve_ai_context(
+    cve_id: str,
+    force: bool = False,
+    _: None = Depends(require_ai_admin_key),
+    db: Session = Depends(get_db),
+):
     cve = load_cve_for_ai(db, cve_id)
     if not cve:
         raise HTTPException(404, "CVE not found")

@@ -6,9 +6,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.models import Cve, CveEnrichment, CveProduct, Product, Release
+import app.api.routes as routes
 from backend.app.main import app
 
 
@@ -233,7 +235,7 @@ def test_product_rollup_endpoints_return_truthy_counts() -> None:
     assert risk_ranking[0]["risk_level"] == "Low"
 
 
-def test_ai_context_empty_and_missing_key_generate() -> None:
+def test_ai_context_empty_and_missing_key_generate(monkeypatch) -> None:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -249,6 +251,7 @@ def test_ai_context_empty_and_missing_key_generate() -> None:
         with TestingSessionLocal() as db:
             yield db
 
+    monkeypatch.setattr(settings, "ai_admin_api_key", None)
     app.dependency_overrides[get_db] = override_get_db
     try:
         client = TestClient(app)
@@ -261,4 +264,61 @@ def test_ai_context_empty_and_missing_key_generate() -> None:
     assert empty_response.status_code == 404
     assert empty_response.json()["detail"] == "AI context not generated"
     assert missing_key_response.status_code == 503
-    assert "OPENAI_API_KEY" in missing_key_response.json()["detail"]
+    assert missing_key_response.json()["detail"] == "AI admin key is not configured"
+
+
+def test_ai_context_generate_requires_valid_admin_key(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        cve = Cve(cve_id="CVE-2026-9998", title="AI context admin test")
+        db.add(cve)
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    def fake_generate_with_openai(payload):
+        return {
+            "plain_summary": "Samenvatting.",
+            "business_impact": "Impact.",
+            "who_should_act": ["Beheerder"],
+            "what_to_check": ["Controleer productdata"],
+            "recommended_action": "Controleer en patch waar nodig.",
+            "technical_context": "Technische context.",
+            "confidence": "medium",
+            "limitations": ["Beperkte brondata"],
+        }
+
+    monkeypatch.setattr(settings, "ai_admin_api_key", "secret")
+    monkeypatch.setattr(routes, "generate_with_openai", fake_generate_with_openai)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        get_response = client.get("/api/v1/cves/CVE-2026-9998/ai-context")
+        missing_response = client.post("/api/v1/cves/CVE-2026-9998/ai-context/generate")
+        invalid_response = client.post(
+            "/api/v1/cves/CVE-2026-9998/ai-context/generate",
+            headers={"X-AI-Admin-Key": "wrong"},
+        )
+        valid_response = client.post(
+            "/api/v1/cves/CVE-2026-9998/ai-context/generate",
+            headers={"X-AI-Admin-Key": "secret"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert get_response.status_code == 404
+    assert get_response.json()["detail"] == "AI context not generated"
+    assert missing_response.status_code == 403
+    assert missing_response.json()["detail"] == "Invalid AI admin key"
+    assert invalid_response.status_code == 403
+    assert invalid_response.json()["detail"] == "Invalid AI admin key"
+    assert valid_response.status_code == 200
+    assert valid_response.json()["plain_summary"] == "Samenvatting."
