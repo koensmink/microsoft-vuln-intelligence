@@ -19,6 +19,7 @@ REQUIRED_TEXT_FIELDS = [
     "confidence",
 ]
 REQUIRED_LIST_FIELDS = ["who_should_act", "what_to_check", "limitations"]
+OPTIONAL_LIST_FIELDS = ["how_to_check", "powershell_checks", "verification_notes"]
 
 
 def load_cve_for_ai(db: Session, cve_id: str) -> Cve | None:
@@ -227,6 +228,10 @@ def upsert_ai_context(
 
     for field in REQUIRED_TEXT_FIELDS + REQUIRED_LIST_FIELDS:
         setattr(context, field, payload[field])
+
+    for field in OPTIONAL_LIST_FIELDS:
+        if field in payload:
+            setattr(context, field, payload[field] or [])
 
     if not existing:
         db.add(context)

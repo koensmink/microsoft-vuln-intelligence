@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import case, func, or_, select
@@ -10,6 +11,7 @@ from app.services.ai_context import build_source_payload, generate_with_openai, 
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
 from app.models.entities import CveAiContext, CveEnrichment, CveProduct
 from app.schemas import (
+    AiContextBatchGenerateOut,
     CveAiContextOut,
     CveDetailOut,
     CveEnrichmentOut,
@@ -27,6 +29,7 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
 
 
 def require_ai_admin_key(x_ai_admin_key: str | None = Header(default=None, alias="X-AI-Admin-Key")) -> None:
@@ -34,6 +37,78 @@ def require_ai_admin_key(x_ai_admin_key: str | None = Header(default=None, alias
         raise HTTPException(status_code=503, detail="AI admin key is not configured")
     if x_ai_admin_key != settings.ai_admin_api_key:
         raise HTTPException(status_code=403, detail="Invalid AI admin key")
+
+
+def _latest_release_id(db: Session) -> int | None:
+    return db.scalar(
+        select(Release.id)
+        .where(Release.release_date.is_not(None))
+        .order_by(Release.release_date.desc(), Release.release_name.desc())
+        .limit(1)
+    )
+
+
+def _select_ai_context_batch_cve_ids(db: Session, limit: int, latest_only: bool) -> list[str]:
+    latest_release_id = _latest_release_id(db)
+
+    kev_rank = func.max(case((CveEnrichment.kev_known_exploited.is_(True), 1), else_=0))
+    exploited_rank = func.max(case((CveProduct.exploited.is_(True), 1), else_=0))
+    critical_rank = func.max(case((CveProduct.severity == "Critical", 1), else_=0))
+    epss_rank = func.max(func.coalesce(CveEnrichment.epss_score, 0))
+    release_rank = func.max(Release.release_date)
+
+    priority_clause = or_(
+        CveProduct.severity == "Critical",
+        CveProduct.exploited.is_(True),
+        CveEnrichment.kev_known_exploited.is_(True),
+        CveEnrichment.epss_score >= 0.01,
+    )
+    if latest_release_id is not None:
+        priority_clause = or_(priority_clause, Cve.release_id == latest_release_id)
+
+    stmt = (
+        select(Cve.cve_id)
+        .outerjoin(Cve.release)
+        .outerjoin(Cve.product_links)
+        .outerjoin(Cve.enrichments)
+        .where(priority_clause)
+        .group_by(Cve.id)
+        .order_by(
+            kev_rank.desc(),
+            exploited_rank.desc(),
+            critical_rank.desc(),
+            epss_rank.desc(),
+            release_rank.desc(),
+            Cve.cve_id.desc(),
+        )
+        .limit(limit)
+    )
+    if latest_only and latest_release_id is not None:
+        stmt = stmt.where(Cve.release_id == latest_release_id)
+
+    return list(db.scalars(stmt).all())
+
+
+def _generate_ai_context_for_cve(db: Session, cve_id: str, force: bool) -> bool:
+    cve = load_cve_for_ai(db, cve_id)
+    if not cve:
+        raise ValueError("CVE not found")
+
+    payload = build_source_payload(cve)
+    hash_value = source_hash(payload)
+    cached = db.scalar(
+        select(CveAiContext).where(
+            CveAiContext.cve_id == cve.id,
+            CveAiContext.language == "nl",
+            CveAiContext.source_hash == hash_value,
+        )
+    )
+    if cached and not force:
+        return False
+
+    generated = generate_with_openai(payload)
+    upsert_ai_context(db, cve, generated, hash_value)
+    return True
 
 
 def _filtered_cve_ids_subquery(release: str | None, severity: str | None, kev: bool | None, min_epss: float | None):
@@ -423,6 +498,41 @@ def generate_cve_ai_context(
         raise HTTPException(status_code=502, detail="Failed to generate AI context") from exc
 
     return upsert_ai_context(db, cve, generated, hash_value)
+
+
+@router.post("/ai-context/batch-generate", response_model=AiContextBatchGenerateOut)
+def batch_generate_ai_context(
+    limit: int = Query(50, ge=1, le=250),
+    force: bool = False,
+    latest_only: bool = True,
+    _: None = Depends(require_ai_admin_key),
+    db: Session = Depends(get_db),
+):
+    selected_cve_ids = _select_ai_context_batch_cve_ids(db, limit, latest_only)
+    summary = {"selected": len(selected_cve_ids), "generated": 0, "skipped": 0, "failed": 0, "failures": []}
+
+    for cve_id in selected_cve_ids:
+        try:
+            generated = _generate_ai_context_for_cve(db, cve_id, force)
+        except Exception as exc:
+            db.rollback()
+            summary["failed"] += 1
+            summary["failures"].append({"cve_id": cve_id, "error": str(exc)})
+            logger.exception("Failed batch AI context generation for %s", cve_id)
+            continue
+
+        if generated:
+            summary["generated"] += 1
+            logger.info("Generated AI context for %s", cve_id)
+        else:
+            summary["skipped"] += 1
+            logger.info("Skipped cached AI context for %s", cve_id)
+
+    logger.info(
+        "AI context batch complete: selected=%s generated=%s skipped=%s failed=%s",
+        summary["selected"], summary["generated"], summary["skipped"], summary["failed"],
+    )
+    return summary
 
 
 @router.get("/products/summary", response_model=list[ProductSummaryOut])
