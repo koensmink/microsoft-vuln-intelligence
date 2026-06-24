@@ -18,7 +18,14 @@ REQUIRED_TEXT_FIELDS = [
     "technical_context",
     "confidence",
 ]
-REQUIRED_LIST_FIELDS = ["who_should_act", "what_to_check", "limitations"]
+REQUIRED_LIST_FIELDS = [
+    "who_should_act",
+    "what_to_check",
+    "limitations",
+    "how_to_check",
+    "powershell_checks",
+    "verification_notes",
+]
 OPTIONAL_LIST_FIELDS = ["how_to_check", "powershell_checks", "verification_notes"]
 
 
@@ -99,6 +106,24 @@ def validate_ai_context(data: dict[str, Any]) -> dict[str, Any]:
     for field in REQUIRED_LIST_FIELDS:
         value = data.get(field)
 
+        if field == "powershell_checks":
+            if not isinstance(value, list):
+                data[field] = []
+                continue
+
+            checks = []
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+
+                check = dict(item)
+                for key in ("title", "command", "explanation", "applies_to"):
+                    check.setdefault(key, "")
+                checks.append(check)
+
+            data[field] = checks
+            continue
+
         if isinstance(value, list):
             continue
 
@@ -157,6 +182,9 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "confidence,\n"
                 "who_should_act,\n"
                 "what_to_check,\n"
+                "how_to_check,\n"
+                "powershell_checks,\n"
+                "verification_notes,\n"
                 "limitations.\n\n"
                 "Gebruik de velden als volgt:\n"
                 "plain_summary = Leg in gewone taal uit wat er aan de hand is.\n"
@@ -165,13 +193,22 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "recommended_action = Beschrijf de eerste concrete acties die een organisatie moet uitvoeren.\n"
                 "technical_context = Leg technische details uit in begrijpelijke taal. Gebruik geen jargon zonder uitleg.\n"
                 "who_should_act = Lijst van teams of rollen die waarschijnlijk verantwoordelijk zijn.\n"
-                "what_to_check = Concrete controlepunten die iemand direct kan nalopen. "
-                "Geef waar betrouwbaar mogelijk defensieve PowerShell-controles, maar verzin geen exploitchecks.\n"
+                "what_to_check = Concrete controlepunten die iemand direct kan nalopen, zonder PowerShell-commando's.\n"
+                "how_to_check = Altijd een array met controles in gewone taal die uitleggen hoe iemand kan verifiëren of actie nodig is.\n"
+                "powershell_checks = Altijd een array met objecten voor defensieve PowerShell-verificatie. "
+                "Elk object bevat exact: title, command, explanation, applies_to. "
+                "Gebruik alleen betrouwbare commando's voor versie-, update- of productcontrole. "
+                "Als geen betrouwbare PowerShell-controle mogelijk is, gebruik [].\n"
+                "verification_notes = Altijd een array met aanvullende opmerkingen over verificatie, onzekerheden of beperkingen.\n"
                 "limitations = Welke informatie ontbreekt waardoor onzekerheid bestaat.\n"
                 "confidence moet uitsluitend zijn: low, medium of high.\n\n"
                 "Belangrijk:\n"
                 "- Geef altijd alle gevraagde velden terug.\n"
-                "- who_should_act, what_to_check en limitations moeten altijd arrays zijn.\n"
+                "- who_should_act, what_to_check, how_to_check, powershell_checks, verification_notes en limitations moeten altijd arrays zijn.\n"
+                "- powershell_checks moet altijd een array van objecten zijn met title, command, explanation en applies_to.\n"
+                "- Zet PowerShell-commando's niet in what_to_check.\n"
+                "- Zet PowerShell-commando's alleen in powershell_checks.\n"
+                "- Als geen betrouwbare PowerShell-controle mogelijk is, geef powershell_checks terug als [].\n"
                 "- Gebruik [] als er geen informatie beschikbaar is.\n"
                 "- Gebruik nooit een string voor arrayvelden.\n"
                 "- Geef geen aanvalsinstructies of exploitstappen.\n"
