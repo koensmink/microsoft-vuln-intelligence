@@ -336,3 +336,78 @@ def test_ai_context_generate_requires_valid_admin_key(monkeypatch) -> None:
     assert valid_body["how_to_check"] == ["Controleer of het product aanwezig is."]
     assert valid_body["powershell_checks"][0]["command"] == "Get-ComputerInfo"
     assert valid_body["verification_notes"] == ["Gebruik officiële remediation-data voor patchstatus."]
+
+
+def test_ai_context_batch_generate_requires_key_and_skips_cached(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(engine)
+
+    with TestingSessionLocal() as db:
+        release = Release(release_name="2026-Jun", release_date=datetime(2026, 6, 11))
+        product = Product(product_id="p-batch", name="Batch Product")
+        db.add_all([release, product])
+        db.flush()
+        cve = Cve(cve_id="CVE-2026-7777", title="Batch critical", release_id=release.id)
+        db.add(cve)
+        db.flush()
+        db.add(CveProduct(cve_id=cve.id, product_id=product.id, severity="Critical"))
+        db.commit()
+
+    def override_get_db() -> Iterator[Session]:
+        with TestingSessionLocal() as db:
+            yield db
+
+    calls = []
+
+    def fake_generate_with_openai(payload):
+        calls.append(payload["cve_id"])
+        return {
+            "plain_summary": "Samenvatting.",
+            "business_impact": "Impact.",
+            "who_should_act": ["Beheerder"],
+            "what_to_check": ["Controleer productdata"],
+            "recommended_action": "Controleer en patch waar nodig.",
+            "technical_context": "Technische context.",
+            "confidence": "medium",
+            "limitations": ["Beperkte brondata"],
+        }
+
+    monkeypatch.setattr(settings, "ai_admin_api_key", "secret")
+    monkeypatch.setattr(routes, "generate_with_openai", fake_generate_with_openai)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        missing_response = client.post("/api/v1/ai-context/batch-generate")
+        generated_response = client.post(
+            "/api/v1/ai-context/batch-generate",
+            headers={"X-AI-Admin-Key": "secret"},
+        )
+        skipped_response = client.post(
+            "/api/v1/ai-context/batch-generate",
+            headers={"X-AI-Admin-Key": "secret"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+    assert missing_response.status_code == 403
+    assert generated_response.status_code == 200
+    assert generated_response.json() == {
+        "selected": 1,
+        "generated": 1,
+        "skipped": 0,
+        "failed": 0,
+        "failures": [],
+    }
+    assert skipped_response.status_code == 200
+    assert skipped_response.json() == {
+        "selected": 1,
+        "generated": 0,
+        "skipped": 1,
+        "failed": 0,
+        "failures": [],
+    }
+    assert calls == ["CVE-2026-7777"]

@@ -110,6 +110,19 @@ class PowerShellCheckOut(BaseModel):
     applies_to: str
 
 
+class AiContextBatchFailureOut(BaseModel):
+    cve_id: str
+    error: str
+
+
+class AiContextBatchGenerateOut(BaseModel):
+    selected: int
+    generated: int
+    skipped: int
+    failed: int
+    failures: list[AiContextBatchFailureOut] = []
+
+
 class CveAiContextOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
