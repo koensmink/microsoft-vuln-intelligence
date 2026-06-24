@@ -19,7 +19,6 @@ REQUIRED_TEXT_FIELDS = [
     "confidence",
 ]
 REQUIRED_LIST_FIELDS = ["who_should_act", "what_to_check", "limitations"]
-OPTIONAL_LIST_FIELDS = ["how_to_check", "powershell_checks", "verification_notes"]
 
 
 def load_cve_for_ai(db: Session, cve_id: str) -> Cve | None:
@@ -97,25 +96,26 @@ def validate_ai_context(data: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"OpenAI response missing required field: {field}")
 
     for field in REQUIRED_LIST_FIELDS:
-        if not isinstance(data.get(field), list):
-            raise ValueError(f"OpenAI response missing required list field: {field}")
+        value = data.get(field)
 
-    for field in OPTIONAL_LIST_FIELDS:
-        if field not in data:
+        if isinstance(value, list):
+            continue
+
+        if isinstance(value, str) and value.strip():
+            data[field] = [value.strip()]
+            continue
+
+        if value is None:
             data[field] = []
-        if not isinstance(data.get(field), list):
-            raise ValueError(f"OpenAI response field must be a list: {field}")
+            continue
 
-    for index, check in enumerate(data["powershell_checks"]):
-        if not isinstance(check, dict):
-            raise ValueError("OpenAI response powershell_checks entries must be objects")
-        for field in ["title", "command", "explanation", "applies_to"]:
-            if not isinstance(check.get(field), str):
-                raise ValueError(f"OpenAI response powershell_checks[{index}] missing string field: {field}")
+        raise ValueError(f"OpenAI response missing required list field: {field}")
 
+    confidence = data.get("confidence", "").strip().lower()
     allowed_confidence = {"low", "medium", "high"}
-    if data.get("confidence") not in allowed_confidence:
+    if confidence not in allowed_confidence:
         raise ValueError("OpenAI response has invalid confidence value")
+    data["confidence"] = confidence
 
     return data
 
@@ -133,7 +133,8 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "CVSS, EPSS, KEV, privilege escalation, remote code execution, attack vector "
                 "of remediation. "
                 "Gebruik uitsluitend informatie uit de aangeleverde CVE-data. "
-                "Verzin geen feiten. "
+                "Verzin geen feiten, getroffen producten, exploitdetails, mitigaties, workarounds "
+                "of specifieke patchnummers die niet in de data staan. "
                 "Als informatie ontbreekt, benoem dat expliciet. "
                 "Vertaal technische informatie naar begrijpelijke taal. "
                 "Leg uit waarom iemand dit moet weten en wat er praktisch gedaan moet worden. "
@@ -155,10 +156,7 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "confidence,\n"
                 "who_should_act,\n"
                 "what_to_check,\n"
-                "limitations,\n"
-                "how_to_check,\n"
-                "powershell_checks,\n"
-                "verification_notes.\n\n"
+                "limitations.\n\n"
                 "Gebruik de velden als volgt:\n"
                 "plain_summary = Leg in gewone taal uit wat er aan de hand is.\n"
                 "business_impact = Beantwoord waarom dit belangrijk is, wat er kan gebeuren als we niets doen, "
@@ -166,23 +164,23 @@ def _messages(payload: dict[str, Any]) -> list[dict[str, str]]:
                 "recommended_action = Beschrijf de eerste concrete acties die een organisatie moet uitvoeren.\n"
                 "technical_context = Leg technische details uit in begrijpelijke taal. Gebruik geen jargon zonder uitleg.\n"
                 "who_should_act = Lijst van teams of rollen die waarschijnlijk verantwoordelijk zijn.\n"
-                "what_to_check = Concrete controlepunten die iemand direct kan nalopen.\n"
+                "what_to_check = Concrete controlepunten die iemand direct kan nalopen. "
+                "Geef waar betrouwbaar mogelijk defensieve PowerShell-controles, maar verzin geen exploitchecks.\n"
                 "limitations = Welke informatie ontbreekt waardoor onzekerheid bestaat.\n"
-                "how_to_check = Praktische, defensieve stappen om te bepalen of het getroffen product aanwezig is of aandacht nodig heeft.\n"
-                "powershell_checks = Een lijst met objecten met exact deze stringvelden: title, command, explanation, applies_to. "
-                "Gebruik alleen defensieve inventarisatie- of statuscontroles. Geef geen exploit-instructies. "
-                "Gebruik alleen PowerShell-controles die betrouwbaar passen bij de aangeleverde productdata. "
-                "Voorbeelden van toegestane controles zijn Get-MpComputerStatus voor Defender, Get-HotFix en Get-ComputerInfo voor Windows/Windows Server, "
-                "Get-ItemProperty op standaard browser-uninstall-paden voor Edge, Get-ExchangeServer | Format-List Name,Edition,AdminDisplayVersion voor Exchange, "
-                "en Get-SPFarm | Select BuildVersion voor SharePoint. Verzin geen KB-nummers, registry keys, mitigaties of productversies. "
-                "Als er geen betrouwbare PowerShell-controle kan worden afgeleid uit de brondata, geef powershell_checks terug als een lege array.\n"
-                "verification_notes = Korte notities over beperkingen bij verificatie, bijvoorbeeld dat update- of versievergelijking alleen kan met officiële remediation-data in de bron.\n"
                 "confidence moet uitsluitend zijn: low, medium of high.\n\n"
+                "Belangrijk:\n"
+                "- Geef altijd alle gevraagde velden terug.\n"
+                "- who_should_act, what_to_check en limitations moeten altijd arrays zijn.\n"
+                "- Gebruik [] als er geen informatie beschikbaar is.\n"
+                "- Gebruik nooit een string voor arrayvelden.\n"
+                "- Geef geen aanvalsinstructies of exploitstappen.\n"
+                "- PowerShell mag alleen worden gebruikt voor defensieve verificatie, zoals versie-, update- of productcontrole.\n\n"
                 "Schrijf alsof je een manager helpt begrijpen wat deze kwetsbaarheid betekent zonder security-achtergrond.\n\n"
                 f"CVE-data: {json.dumps(payload, ensure_ascii=False, default=str)}"
             ),
         },
     ]
+
 
 def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
     if not settings.openai_api_key:
@@ -208,9 +206,8 @@ def generate_with_openai(payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     content = response.json()["choices"][0]["message"]["content"]
-    logger.warning("OPENAI RAW RESPONSE:\n%s", content)
-    
     return validate_ai_context(json.loads(content))
+
 
 def upsert_ai_context(
     db: Session,
@@ -228,8 +225,8 @@ def upsert_ai_context(
     context.model = settings.openai_model
     context.source_hash = source_hash_value
 
-    for field in REQUIRED_TEXT_FIELDS + REQUIRED_LIST_FIELDS + OPTIONAL_LIST_FIELDS:
-        setattr(context, field, payload.get(field, []))
+    for field in REQUIRED_TEXT_FIELDS + REQUIRED_LIST_FIELDS:
+        setattr(context, field, payload[field])
 
     if not existing:
         db.add(context)
