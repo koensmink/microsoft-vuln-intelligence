@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import case, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
@@ -10,6 +11,13 @@ from app.db.session import get_db
 from app.services.ai_context import build_source_payload, generate_with_openai, load_cve_for_ai, source_hash, upsert_ai_context
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
 from app.models.entities import CveAiContext, CveEnrichment, CveProduct
+from app.schemas.entities import DataQualityOut, PrioritizedCveOut, ReleaseSummaryOut, SystemStatusOut
+from app.services.intelligence_summary import (
+    get_data_quality,
+    get_prioritized_cves,
+    get_release_summary,
+    get_system_status,
+)
 from app.schemas import (
     AiContextBatchGenerateOut,
     CveAiContextOut,
@@ -317,6 +325,49 @@ def health():
     return {"status": "ok"}
 
 
+@router.get("/system/status", response_model=SystemStatusOut)
+def system_status(db: Session = Depends(get_db)):
+    try:
+        return get_system_status(db)
+    except SQLAlchemyError as exc:
+        logger.exception("Failed to query system status")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+
+@router.get("/system/data-quality", response_model=DataQualityOut)
+def system_data_quality(db: Session = Depends(get_db)):
+    try:
+        return get_data_quality(db)
+    except SQLAlchemyError as exc:
+        logger.exception("Failed to query data quality")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+
+@router.get("/cves/prioritized", response_model=list[PrioritizedCveOut])
+def prioritized_cves(
+    db: Session = Depends(get_db),
+    release: str | None = None,
+    priority: str | None = Query(None, pattern="^(immediate|high|routine)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    product_family: str | None = None,
+    product_category: str | None = None,
+):
+    try:
+        return get_prioritized_cves(
+            db,
+            release=release,
+            priority=priority,
+            limit=limit,
+            offset=offset,
+            product_family=product_family,
+            product_category=product_category,
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("Failed to query prioritized CVEs")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+
 @router.get("/cves", response_model=list[CveOut])
 def list_cves(
     db: Session = Depends(get_db),
@@ -581,6 +632,18 @@ def get_product(product_id: str, db: Session = Depends(get_db)):
 @router.get("/releases", response_model=list[ReleaseOut])
 def list_releases(db: Session = Depends(get_db)):
     return db.scalars(select(Release).order_by(Release.release_name.desc())).all()
+
+
+@router.get("/releases/{release_name}/summary", response_model=ReleaseSummaryOut)
+def release_summary(release_name: str, db: Session = Depends(get_db)):
+    try:
+        summary = get_release_summary(db, release_name)
+    except SQLAlchemyError as exc:
+        logger.exception("Failed to query release summary for %s", release_name)
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    if summary is None:
+        raise HTTPException(404, "Release not found")
+    return summary
 
 
 @router.get("/releases/{release_name}", response_model=ReleaseOut)

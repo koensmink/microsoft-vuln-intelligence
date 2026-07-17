@@ -270,3 +270,63 @@ class StatsOut(BaseModel):
 class SyncRequest(BaseModel):
     release_name: str | None = None
     release: str | None = None
+
+
+class SystemStatusOut(BaseModel):
+    status: str
+    database: str
+    latest_release: str | None = None
+    latest_release_date: date | datetime | None = None
+    last_successful_sync: datetime | None = None
+    last_sync_status: str | None = None
+    records_processed: int | None = None
+    data_freshness_hours: float | None = None
+
+
+class CoverageOut(BaseModel):
+    covered: int
+    missing: int
+    percentage: float
+
+
+class DataQualityOut(BaseModel):
+    total_cves: int
+    epss_coverage: CoverageOut
+    nvd_coverage: CoverageOut
+    ai_context_coverage: CoverageOut
+    product_classification: CoverageOut
+
+
+class PrioritizedCveOut(BaseModel):
+    cve_id: str
+    title: str | None = None
+    product_family: str | None = None
+    product_category: str | None = None
+    severity: str
+    cvss_score: float | None = None
+    epss_score: float | None = None
+    kev: bool
+    exploited: bool
+    publicly_disclosed: bool
+    priority_score: int
+    priority_level: str
+    priority_reasons: list[str]
+
+
+class ReleaseSummaryOut(BaseModel):
+    release: str
+    release_date: date | datetime | None = None
+    total_cves: int
+    critical_cves: int
+    exploited_cves: int
+    publicly_disclosed_cves: int
+    kev_cves: int
+    high_epss_cves: int
+    average_cvss_score: float | None = None
+    highest_cvss_score: float | None = None
+    highest_epss_score: float | None = None
+    affected_product_families: int
+    previous_release: str | None = None
+    cve_delta: int | None = None
+    critical_delta: int | None = None
+    priority_cves: list[PrioritizedCveOut]
