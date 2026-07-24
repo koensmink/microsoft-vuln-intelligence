@@ -162,6 +162,47 @@ def test_prioritized_consolidation_sorting_and_filters(db):
     assert [row["cve_id"] for row in get_prioritized_cves(db, limit=1, offset=1)] == ["CVE-2026-2"]
 
 
+def test_prioritized_excludes_rejected_and_preserves_deferred_enrichment_data(client, db):
+    release = Release(release_name="2026-Jul", release_date=datetime(2026, 7, 14))
+    db.add(release)
+    db.commit()
+    add_cve(db, release, "CVE-2026-REJECTED", products=[
+        {"severity": "Critical", "cvss_base_score": 9.8, "exploited": True, "product_family": "Windows", "product_category": "OS"},
+    ], enrichments=[
+        {"source": "nvd", "raw_json": '{"cve": {"vulnStatus": "Rejected"}}'},
+        {"source": "epss", "epss_score": 0.9},
+        {"source": "kev", "kev_known_exploited": True},
+    ])
+    add_cve(db, release, "CVE-2026-DEFERRED", products=[
+        {"severity": "Important", "product_family": "Windows", "product_category": "OS"},
+    ], enrichments=[
+        {"source": "nvd", "raw_json": '{"cve": {"vulnStatus": "Deferred"}}'},
+        {"source": "epss", "epss_score": 0.2},
+        {"source": "kev", "kev_known_exploited": True},
+    ])
+    add_cve(db, release, "CVE-2026-NORMAL", products=[
+        {"severity": "Low", "product_family": "Office", "product_category": "Apps"},
+    ], enrichments=[
+        {"source": "nvd", "cvss_score": 7.5, "raw_json": '{"cve": {"vulnStatus": "Analyzed"}}'},
+    ])
+    add_cve(db, release, "CVE-2026-NO-NVD", products=[
+        {"severity": "Low", "product_family": "Office", "product_category": "Apps"},
+    ])
+
+    response = client.get("/api/v1/cves/prioritized?limit=100")
+
+    assert response.status_code == 200
+    rows = {row["cve_id"]: row for row in response.json()}
+    assert "CVE-2026-REJECTED" not in rows
+    assert set(rows) == {"CVE-2026-DEFERRED", "CVE-2026-NORMAL", "CVE-2026-NO-NVD"}
+    assert rows["CVE-2026-DEFERRED"]["nvd_status"] == "Deferred"
+    assert rows["CVE-2026-DEFERRED"]["cvss_score"] is None
+    assert rows["CVE-2026-DEFERRED"]["epss_score"] == 0.2
+    assert rows["CVE-2026-DEFERRED"]["kev"] is True
+    assert rows["CVE-2026-NORMAL"]["nvd_status"] == "Analyzed"
+    assert rows["CVE-2026-NO-NVD"]["nvd_status"] is None
+
+
 def test_release_summary_chronology_and_deltas(db):
     oldest = Release(release_name="2099-Zzz", release_date=datetime(2026, 1, 1))
     previous = Release(release_name="2000-Aaa", release_date=datetime(2026, 2, 1))

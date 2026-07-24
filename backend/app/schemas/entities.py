@@ -315,6 +315,7 @@ class PrioritizedCveOut(BaseModel):
     severity: str
     cvss_score: float | None = None
     epss_score: float | None = None
+    nvd_status: str | None = None
     kev: bool
     exploited: bool
     publicly_disclosed: bool
