@@ -142,20 +142,50 @@ def _nvd_get(client: httpx.Client, params: dict[str, Any]) -> dict[str, Any]:
     raise RuntimeError("NVD request retries exhausted")
 
 
-def _nvd_date_bounds(conn) -> tuple[datetime, datetime]:
-    row = conn.execute(text("SELECT MIN(release_date), MAX(release_date) FROM cves WHERE release_date IS NOT NULL")).one()
-    # There is no run-level NVD cursor in the existing schema, so release dates are
-    # the reliable bounded source for a full NVD refresh.
-    start = date.fromisoformat(row[0]) if isinstance(row[0], str) else row[0] or date(1999, 1, 1)
-    end = date.fromisoformat(row[1]) if isinstance(row[1], str) else row[1] or utcnow().date()
+def _nvd_date_bounds(conn, cve_ids: list[str]) -> tuple[datetime, datetime] | None:
+    if not cve_ids:
+        print("NVD enrichment skipped: no CVEs with valid linked release dates", file=sys.stderr)
+        return None
+    row = conn.execute(
+        text(
+            """
+            SELECT MIN(release_date), MAX(release_date)
+            FROM (
+                SELECT releases.release_date AS release_date
+                FROM cves
+                JOIN releases ON releases.id = cves.release_id
+                WHERE cves.cve_id IN :cve_ids
+                  AND releases.release_date IS NOT NULL
+                  AND releases.release_date >= :minimum_release_date
+            ) AS valid_release_dates
+            """
+        ).bindparams(bindparam("cve_ids", expanding=True)),
+        {"cve_ids": cve_ids, "minimum_release_date": date(1999, 1, 1)},
+    ).one()
+    if not row or row[0] is None or row[1] is None:
+        print("NVD enrichment skipped: no CVEs with valid linked release dates", file=sys.stderr)
+        return None
+    def as_date(value):
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                return datetime.fromisoformat(value).date()
+        return value.date() if isinstance(value, datetime) else value
+
+    start = as_date(row[0])
+    end = as_date(row[1])
     return (
         datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc),
         datetime.combine(end, datetime.max.time(), tzinfo=timezone.utc),
     )
 
 
-def _nvd_windows(conn):
-    start, end = _nvd_date_bounds(conn)
+def _nvd_windows(conn, cve_ids: list[str]):
+    bounds = _nvd_date_bounds(conn, cve_ids)
+    if bounds is None:
+        return
+    start, end = bounds
     while start <= end:
         window_end = min(start + timedelta(days=NVD_WINDOW_DAYS) - timedelta(microseconds=1), end)
         yield start, window_end
@@ -164,31 +194,35 @@ def _nvd_windows(conn):
 
 def enrich_nvd(conn, cve_ids: list[str]) -> int:
     wanted = set(cve_ids)
-    count = 0
+    enriched = set()
     request_made = False
-    with _client() as client:
-        for window_start, window_end in _nvd_windows(conn):
-            start_index = 0
-            while True:
-                if request_made:
-                    time.sleep(_nvd_request_delay())
-                payload = _nvd_get(client, {
-                    "pubStartDate": window_start.isoformat(timespec="milliseconds"),
-                    "pubEndDate": window_end.isoformat(timespec="milliseconds"),
-                    "resultsPerPage": NVD_RESULTS_PER_PAGE,
-                    "startIndex": start_index,
-                })
-                request_made = True
-                vulnerabilities = payload.get("vulnerabilities") or []
-                for vuln in vulnerabilities:
-                    cve_id = vuln.get("cve", {}).get("id")
-                    if cve_id in wanted:
-                        upsert_enrichment(conn, cve_id, "nvd", parse_nvd(vuln))
-                        count += 1
-                start_index += len(vulnerabilities)
-                if start_index >= payload.get("totalResults", 0) or not vulnerabilities:
-                    break
-    return count
+    try:
+        with _client() as client:
+            for window_start, window_end in _nvd_windows(conn, cve_ids):
+                start_index = 0
+                while True:
+                    if request_made:
+                        time.sleep(_nvd_request_delay())
+                    payload = _nvd_get(client, {
+                        "pubStartDate": window_start.isoformat(timespec="milliseconds"),
+                        "pubEndDate": window_end.isoformat(timespec="milliseconds"),
+                        "resultsPerPage": NVD_RESULTS_PER_PAGE,
+                        "startIndex": start_index,
+                    })
+                    request_made = True
+                    vulnerabilities = payload.get("vulnerabilities") or []
+                    for vuln in vulnerabilities:
+                        cve_id = vuln.get("cve", {}).get("id")
+                        if cve_id in wanted:
+                            upsert_enrichment(conn, cve_id, "nvd", parse_nvd(vuln))
+                            enriched.add(cve_id)
+                    start_index += len(vulnerabilities)
+                    if start_index >= payload.get("totalResults", 0) or not vulnerabilities:
+                        break
+    except Exception as exc:
+        exc.nvd_count = len(enriched)
+        raise
+    return len(enriched)
 
 
 def enrich_epss(conn, cve_ids: list[str]) -> int:
@@ -226,6 +260,7 @@ def main() -> None:
             try:
                 totals[source] = func(conn, cve_ids)
             except Exception as exc:
+                totals[source] = getattr(exc, "nvd_count", totals[source])
                 print(f"{source} enrichment failed without blocking other sources: {exc}", file=sys.stderr)
     print(f"enrichment summary: CVEs={len(cve_ids)} nvd={totals['nvd']} kev={totals['kev']} epss={totals['epss']}")
 
