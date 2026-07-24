@@ -57,7 +57,13 @@ def _severity_rank(column):
     )
 
 
-def _consolidated_cves():
+def _nvd_status_expression(db: Session):
+    if db.get_bind().dialect.name == "postgresql":
+        return cast(CveEnrichment.raw_json, JSONB).op("#>>")("{cve,vulnStatus}")
+    return func.json_extract(CveEnrichment.raw_json, "$.cve.vulnStatus")
+
+
+def _consolidated_cves(db: Session):
     # Pick the product row with highest semantic severity, then CVSS, then names.
     # The final id tie-breaker also makes duplicate product labels deterministic.
     ranked_products = select(
@@ -87,6 +93,12 @@ def _consolidated_cves():
         CveEnrichment.cve_id,
         func.max(CveEnrichment.epss_score).label("epss_score"),
         func.max(case((CveEnrichment.kev_known_exploited.is_(True), 1), else_=0)).label("kev"),
+    ).group_by(CveEnrichment.cve_id).subquery()
+    nvd_status_rollup = select(
+        CveEnrichment.cve_id,
+        func.max(_nvd_status_expression(db)).label("nvd_status"),
+    ).where(
+        func.lower(CveEnrichment.source) == "nvd"
     ).group_by(CveEnrichment.cve_id).subquery()
     all_cvss = union_all(
         select(CveProduct.cve_id.label("cve_id"), CveProduct.cvss_base_score.label("score")).where(CveProduct.cvss_base_score.is_not(None)),
@@ -119,11 +131,13 @@ def _consolidated_cves():
         Cve.id.label("cve_pk"), Cve.cve_id, Cve.title, Cve.release_id,
         representative.c.product_family, representative.c.product_category,
         severity, cvss_rollup.c.cvss_score, enrichment_rollup.c.epss_score,
-        kev, exploited, disclosed, priority_score, priority_level,
+        kev, exploited, disclosed, priority_score, priority_level, nvd_status_rollup.c.nvd_status,
     ).select_from(Cve).outerjoin(representative, representative.c.cve_id == Cve.id).outerjoin(
         product_rollup, product_rollup.c.cve_id == Cve.id
     ).outerjoin(enrichment_rollup, enrichment_rollup.c.cve_id == Cve.id).outerjoin(
         cvss_rollup, cvss_rollup.c.cve_id == Cve.id
+    ).outerjoin(
+        nvd_status_rollup, nvd_status_rollup.c.cve_id == Cve.id
     ).subquery()
 
 
@@ -132,8 +146,10 @@ def get_prioritized_cves(
     limit: int = 25, offset: int = 0, product_family: str | None = None,
     product_category: str | None = None,
 ) -> list[dict]:
-    consolidated = _consolidated_cves()
-    stmt = select(consolidated)
+    consolidated = _consolidated_cves(db)
+    stmt = select(consolidated).where(
+        func.coalesce(consolidated.c.nvd_status, "") != "Rejected"
+    )
     if release is not None:
         stmt = stmt.join(Release, Release.id == consolidated.c.release_id).where(Release.release_name == release)
     if priority is not None:
@@ -161,13 +177,14 @@ def get_prioritized_cves(
             "severity": row["severity"], "cvss_score": row["cvss_score"],
             "epss_score": row["epss_score"], "kev": bool(row["kev"]),
             "exploited": bool(row["exploited"]), "publicly_disclosed": bool(row["publicly_disclosed"]),
+            "nvd_status": row["nvd_status"],
             "priority_score": score, "priority_level": level, "priority_reasons": reasons,
         })
     return results
 
 
 def _release_metrics(db: Session, release_id: int) -> dict:
-    consolidated = _consolidated_cves()
+    consolidated = _consolidated_cves(db)
     row = db.execute(select(
         func.count(consolidated.c.cve_pk).label("total_cves"),
         func.sum(case((func.lower(func.trim(consolidated.c.severity)) == "critical", 1), else_=0)).label("critical_cves"),
@@ -252,10 +269,7 @@ def get_data_quality(db: Session) -> dict:
     )
     nvd_records = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(nvd_record)) or 0
     nvd_cvss = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(nvd_record, nvd_with_cvss)) or 0
-    if db.get_bind().dialect.name == "postgresql":
-        nvd_status = cast(CveEnrichment.raw_json, JSONB)["cve"]["vulnStatus"].astext
-    else:
-        nvd_status = func.json_extract(CveEnrichment.raw_json, "$.cve.vulnStatus")
+    nvd_status = _nvd_status_expression(db)
     deferred = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(
         nvd_without_cvss, nvd_status == "Deferred",
     )) or 0
