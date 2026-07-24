@@ -2,7 +2,8 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -10,7 +11,14 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.entities import Cve, CveEnrichment, CveProduct, Product, Release, SyncRun
-from app.services.intelligence_summary import calculate_priority, get_data_quality, get_prioritized_cves, get_release_summary, get_system_status
+from app.services.intelligence_summary import (
+    _nvd_status_expression,
+    calculate_priority,
+    get_data_quality,
+    get_prioritized_cves,
+    get_release_summary,
+    get_system_status,
+)
 
 
 @pytest.fixture
@@ -47,6 +55,20 @@ def add_cve(db, release, cve_id, products=(), enrichments=()):
         db.add(CveEnrichment(cve_id=cve.id, **values))
     db.commit()
     return cve
+
+
+def test_postgresql_nvd_status_path_is_cast_to_text_array():
+    class PostgreSqlSession:
+        @staticmethod
+        def get_bind():
+            return type("Bind", (), {"dialect": postgresql.dialect()})()
+
+    statement = select(_nvd_status_expression(PostgreSqlSession()))
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "#>> CAST(" in compiled
+    assert " AS TEXT[])" in compiled
+    assert "#>> %(param_1)s::VARCHAR" not in compiled
 
 
 def test_empty_database_and_zero_division(db):

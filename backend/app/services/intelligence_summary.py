@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import and_, case, cast, func, literal, or_, select, union_all
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Text, and_, case, cast, func, literal, or_, select, union_all
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Session
 
 from app.models.entities import Cve, CveAiContext, CveEnrichment, CveProduct, Release, SyncRun
@@ -59,7 +59,9 @@ def _severity_rank(column):
 
 def _nvd_status_expression(db: Session):
     if db.get_bind().dialect.name == "postgresql":
-        return cast(CveEnrichment.raw_json, JSONB).op("#>>")("{cve,vulnStatus}")
+        return cast(CveEnrichment.raw_json, JSONB).op("#>>")(
+            cast(literal(["cve", "vulnStatus"]), ARRAY(Text))
+        )
     return func.json_extract(CveEnrichment.raw_json, "$.cve.vulnStatus")
 
 
