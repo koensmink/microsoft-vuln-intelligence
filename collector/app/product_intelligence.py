@@ -58,6 +58,110 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
     if azure_linux_mapping is not None:
         return azure_linux_mapping
 
+    # High-confidence product names must be resolved before broad family rules.
+    explicit_rules: list[tuple[tuple[str, ...], str, str, float]] = [
+        (
+            (
+                "microsoft purview ediscovery",
+                "microsoft purview data governance",
+                "microsoft purview",
+            ),
+            "Microsoft Purview",
+            "Compliance",
+            0.98,
+        ),
+        (
+            ("microsoft partner center",),
+            "Microsoft Partner Center",
+            "Business Applications",
+            0.98,
+        ),
+        (
+            ("system center operations manager", "microsoft configuration manager"),
+            "Microsoft System Center",
+            "IT Management",
+            0.98,
+        ),
+        (("microsoft account",), "Microsoft Account", "Identity", 0.98),
+        (("microsoft authenticator",), "Microsoft Authenticator", "Identity", 0.98),
+        (
+            ("microsoft confluence saml sso plugin", "microsoft jira saml sso plugin"),
+            "Entra ID",
+            "Identity",
+            0.95,
+        ),
+        (
+            ("microsoft aci confidential containers",),
+            "Azure Container Instances",
+            "Cloud Platform",
+            0.98,
+        ),
+        (("microsoft power pages",), "Power Platform", "Business Applications", 0.98),
+        (("microsoft powerbi",), "Power Platform", "Business Applications", 0.96),
+        (
+            (
+                "microsoft bing images",
+                "microsoft bing search for android",
+                "microsoft bing search for ios",
+                "microsoft bing",
+            ),
+            "Microsoft Bing",
+            "Online Services",
+            0.98,
+        ),
+        (
+            ("microsoft malware protection engine",),
+            "Microsoft Defender",
+            "Security",
+            0.99,
+        ),
+        (("microsoft loop",), "Microsoft 365 Apps", "Productivity", 0.96),
+        (("microsoft onenote",), "Microsoft 365 Apps", "Productivity", 0.98),
+        (("microsoft graph",), "Microsoft Graph", "Developer Tools", 0.98),
+        (("microsoft pc manager",), "Windows", "Operating System Component", 0.96),
+        (("microsoft powertoys",), "Windows", "Operating System Component", 0.98),
+        (
+            ("microsoft fabric", "fabric data warehouse"),
+            "Microsoft Fabric",
+            "Data Platform",
+            0.98,
+        ),
+        (
+            ("nuance powerscribe", "powerscribe one"),
+            "Nuance PowerScribe",
+            "Healthcare",
+            0.99,
+        ),
+        (("minecraft", "age of empires"), "Xbox / Gaming", "Gaming", 0.98),
+        (("microsoft hpc pack",), "Microsoft HPC Pack", "Compute Platform", 0.98),
+    ]
+    for phrases, family, category, confidence in explicit_rules:
+        if any(_has_token(value, phrase) for phrase in phrases):
+            return ProductMappingResult(family, category, confidence)
+
+    if re.match(r"^powershell\s+v?\d+(?:\.\d+)*\b", value):
+        return ProductMappingResult("PowerShell", "Runtime / Framework", 0.99)
+
+    if any(
+        re.match(pattern, value)
+        for pattern in (
+            r"^microsoft\.bcl\.(?=[a-z0-9])",
+            r"^microsoft\.aspnet\.odata(?:\b|\.)",
+            r"^microsoft\.aspnetcore\.odata(?:\b|\.)",
+        )
+    ):
+        return ProductMappingResult(".NET", "Runtime / Framework", 0.98)
+
+    if any(
+        re.match(pattern, value)
+        for pattern in (
+            r"^microsoft surface(?:\b|\s)",
+            r"^surface laptop(?:\b|\s)",
+            r"^surface management services(?:\b|\s)",
+        )
+    ):
+        return ProductMappingResult("Microsoft Surface", "Hardware", 0.98)
+
     rules: list[tuple[tuple[str, ...], str, str, float]] = [
         (("azure stack",), "Azure Stack", "Cloud Platform", 0.98),
         (("azure kubernetes service", "aks"), "Azure Kubernetes Service", "Cloud Platform", 0.98),
