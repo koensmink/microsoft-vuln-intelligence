@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -17,6 +18,34 @@ class ProductMappingResult:
     source: str = "rule"
 
 
+def _has_token(value: str, token: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", value) is not None
+
+
+def _is_azure_linux_or_cbl(value: str) -> bool:
+    return (
+        value.startswith("azl3 ")
+        or value.startswith("cbl2 ")
+        or " on azure linux " in value
+        or " on cbl mariner " in value
+    )
+
+
+def _map_azure_linux_or_cbl(value: str) -> ProductMappingResult | None:
+    if not _is_azure_linux_or_cbl(value):
+        return None
+    if _has_token(value, "kernel"):
+        return ProductMappingResult("Azure Linux", "Operating System", 0.98)
+    return ProductMappingResult("Azure Linux", "Third-Party Component", 0.95)
+
+
+def _is_office_product(value: str) -> bool:
+    return any(
+        _has_token(value, token)
+        for token in ("office", "word", "excel", "powerpoint", "outlook", "access", "visio", "publisher")
+    )
+
+
 def map_product_name(raw_name: str | None) -> ProductMappingResult:
     """Map the canonical raw product name from products.name to rollup labels."""
     name = (raw_name or "").strip()
@@ -24,6 +53,10 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
         return ProductMappingResult("Unknown", "Unknown", 1.0)
 
     value = name.lower()
+
+    azure_linux_mapping = _map_azure_linux_or_cbl(value)
+    if azure_linux_mapping is not None:
+        return azure_linux_mapping
 
     rules: list[tuple[tuple[str, ...], str, str, float]] = [
         (("azure stack",), "Azure Stack", "Cloud Platform", 0.98),
@@ -53,15 +86,19 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
         (("copilot",), "Microsoft Copilot", "AI", 0.92),
         (("hyper-v", "hyper v"), "Hyper-V", "Virtualization", 0.96),
         (("edge", "chromium"), "Microsoft Edge", "Browser", 0.90),
-        (("office", "word", "excel", "powerpoint", "outlook", "access", "visio", "publisher"), "Microsoft Office", "Productivity", 0.92),
         (("windows", "win32k", "nt os", "kernel", "http.sys", "netlogon", "remote desktop"), "Windows", "Operating System", 0.90),
         (("apache", "linux", "gnutls", "openssl", "git", "curl", "qt"), "Third-Party / Open Source", "Third-Party Component", 0.90),
         (("azure",), "Azure", "Cloud Platform", 0.90),
     ]
 
     for needles, family, category, confidence in rules:
+        if family == "Windows" and _is_office_product(value):
+            return ProductMappingResult("Microsoft Office", "Productivity", 0.92)
         if any(needle in value for needle in needles):
             return ProductMappingResult(family, category, confidence)
+
+    if _is_office_product(value):
+        return ProductMappingResult("Microsoft Office", "Productivity", 0.92)
 
     return ProductMappingResult("Other Microsoft Product", "Unknown", 0.50)
 
