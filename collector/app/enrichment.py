@@ -1,7 +1,9 @@
 import json
 import os
+import random
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./dev.db")
 NVD_API_BASE_URL = os.getenv("NVD_API_BASE_URL", "https://services.nvd.nist.gov/rest/json/cves/2.0")
 EPSS_API_BASE_URL = os.getenv("EPSS_API_BASE_URL", "https://api.first.org/data/v1/epss")
 KEV_CATALOG_URL = os.getenv("KEV_CATALOG_URL", "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json")
+NVD_RESULTS_PER_PAGE = 2000
+NVD_WINDOW_DAYS = 120
+NVD_MAX_ATTEMPTS = 5
+NVD_REQUEST_DELAY_WITH_API_KEY = 1.0
+NVD_REQUEST_DELAY_WITHOUT_API_KEY = 7.0
+NVD_CLOUDFLARE_BACKOFF_SECONDS = 60.0
 
 
 def utcnow():
@@ -103,15 +111,83 @@ def parse_nvd(vuln: dict[str, Any]) -> dict[str, Any]:
     return {"cvss_score": None, "cvss_vector": None, "severity": None, "epss_score": None, "epss_percentile": None, "kev_known_exploited": None, "kev_due_date": None, "kev_vendor_project": None, "kev_product": None, "kev_required_action": None, "kev_notes": None, "raw_json": json.dumps(vuln, sort_keys=True)}
 
 
+def _nvd_request_delay() -> float:
+    return NVD_REQUEST_DELAY_WITH_API_KEY if os.getenv("NVD_API_KEY") else NVD_REQUEST_DELAY_WITHOUT_API_KEY
+
+
+def _nvd_retry_delay(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(float(retry_after), NVD_CLOUDFLARE_BACKOFF_SECONDS if "1015" in response.text else 0.0)
+        except ValueError:
+            pass
+    delay = (2 ** (attempt - 1)) + random.uniform(0, 1)
+    return max(delay, NVD_CLOUDFLARE_BACKOFF_SECONDS if "1015" in response.text else 0.0)
+
+
+def _nvd_get(client: httpx.Client, params: dict[str, Any]) -> dict[str, Any]:
+    for attempt in range(1, NVD_MAX_ATTEMPTS + 1):
+        response = client.get(NVD_API_BASE_URL, params=params)
+        if response.status_code == 200:
+            return _json_response(response, "NVD")
+        retryable = response.status_code in (403, 429) or 500 <= response.status_code < 600
+        if not retryable:
+            return _json_response(response, "NVD")
+        if attempt == NVD_MAX_ATTEMPTS:
+            raise RuntimeError(f"NVD request failed after {attempt} attempts: status={response.status_code}")
+        delay = _nvd_retry_delay(response, attempt)
+        print(f"NVD request retry attempt={attempt} status={response.status_code} wait={delay:.1f}s", file=sys.stderr)
+        time.sleep(delay)
+    raise RuntimeError("NVD request retries exhausted")
+
+
+def _nvd_date_bounds(conn) -> tuple[datetime, datetime]:
+    row = conn.execute(text("SELECT MIN(release_date), MAX(release_date) FROM cves WHERE release_date IS NOT NULL")).one()
+    # There is no run-level NVD cursor in the existing schema, so release dates are
+    # the reliable bounded source for a full NVD refresh.
+    start = date.fromisoformat(row[0]) if isinstance(row[0], str) else row[0] or date(1999, 1, 1)
+    end = date.fromisoformat(row[1]) if isinstance(row[1], str) else row[1] or utcnow().date()
+    return (
+        datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc),
+        datetime.combine(end, datetime.max.time(), tzinfo=timezone.utc),
+    )
+
+
+def _nvd_windows(conn):
+    start, end = _nvd_date_bounds(conn)
+    while start <= end:
+        window_end = min(start + timedelta(days=NVD_WINDOW_DAYS) - timedelta(microseconds=1), end)
+        yield start, window_end
+        start = window_end + timedelta(microseconds=1)
+
+
 def enrich_nvd(conn, cve_ids: list[str]) -> int:
+    wanted = set(cve_ids)
     count = 0
+    request_made = False
     with _client() as client:
-        for cve_id in cve_ids:
-            payload = _json_response(client.get(NVD_API_BASE_URL, params={"cveId": cve_id}), "NVD")
-            vulnerabilities = payload.get("vulnerabilities") or []
-            if vulnerabilities:
-                upsert_enrichment(conn, cve_id, "nvd", parse_nvd(vulnerabilities[0]))
-                count += 1
+        for window_start, window_end in _nvd_windows(conn):
+            start_index = 0
+            while True:
+                if request_made:
+                    time.sleep(_nvd_request_delay())
+                payload = _nvd_get(client, {
+                    "pubStartDate": window_start.isoformat(timespec="milliseconds"),
+                    "pubEndDate": window_end.isoformat(timespec="milliseconds"),
+                    "resultsPerPage": NVD_RESULTS_PER_PAGE,
+                    "startIndex": start_index,
+                })
+                request_made = True
+                vulnerabilities = payload.get("vulnerabilities") or []
+                for vuln in vulnerabilities:
+                    cve_id = vuln.get("cve", {}).get("id")
+                    if cve_id in wanted:
+                        upsert_enrichment(conn, cve_id, "nvd", parse_nvd(vuln))
+                        count += 1
+                start_index += len(vulnerabilities)
+                if start_index >= payload.get("totalResults", 0) or not vulnerabilities:
+                    break
     return count
 
 
