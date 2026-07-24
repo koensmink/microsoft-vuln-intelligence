@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProductOut(BaseModel):
@@ -289,10 +289,20 @@ class CoverageOut(BaseModel):
     percentage: float
 
 
+class NvdWithoutCvssOut(BaseModel):
+    deferred: int
+    rejected: int
+    other: int
+    total: int
+
+
 class DataQualityOut(BaseModel):
     total_cves: int
     epss_coverage: CoverageOut
-    nvd_coverage: CoverageOut
+    nvd_coverage: CoverageOut = Field(description="Backward-compatible alias for NVD CVSS coverage.")
+    nvd_record_coverage: CoverageOut
+    nvd_cvss_coverage: CoverageOut
+    nvd_without_cvss: NvdWithoutCvssOut
     ai_context_coverage: CoverageOut
     product_classification: CoverageOut
 

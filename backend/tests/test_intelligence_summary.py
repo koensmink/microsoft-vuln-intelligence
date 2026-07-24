@@ -53,7 +53,9 @@ def test_empty_database_and_zero_division(db):
     assert get_system_status(db)["status"] == "degraded"
     quality = get_data_quality(db)
     assert quality["total_cves"] == 0
-    assert all(quality[key]["percentage"] == 0.0 for key in quality if key != "total_cves")
+    for key in ("epss_coverage", "nvd_coverage", "nvd_record_coverage", "nvd_cvss_coverage", "ai_context_coverage", "product_classification"):
+        assert quality[key] == {"covered": 0, "missing": 0, "percentage": 0.0}
+    assert quality["nvd_without_cvss"] == {"deferred": 0, "rejected": 0, "other": 0, "total": 0}
 
 
 def test_status_without_release_or_sync_and_stale_data(db):
@@ -85,7 +87,7 @@ def test_failed_latest_sync_degrades_status(db):
     assert get_system_status(db, now=now)["status"] == "degraded"
 
 
-def test_data_quality_counts_each_cve_once_and_applies_definitions(db):
+def test_data_quality_distinguishes_nvd_records_cvss_and_statuses(db):
     release = Release(release_name="2026-Jul", release_date=datetime(2026, 7, 14))
     db.add(release)
     db.commit()
@@ -98,11 +100,21 @@ def test_data_quality_counts_each_cve_once_and_applies_definitions(db):
     ])
     add_cve(db, release, "CVE-2026-2", products=[
         {"severity": "Important", "product_family": "Other Microsoft Product", "product_category": "Unknown"},
-    ], enrichments=[{"source": "nvd", "cvss_vector": "   "}])
+    ], enrichments=[{"source": "nvd", "cvss_vector": "   ", "raw_json": '{"cve": {"vulnStatus": "Deferred"}}'}])
+    add_cve(db, release, "CVE-2026-3", enrichments=[
+        {"source": "nvd", "raw_json": '{"cve": {"vulnStatus": "Rejected"}}'},
+    ])
+    add_cve(db, release, "CVE-2026-4", enrichments=[
+        {"source": "nvd", "raw_json": '{"cve": {"vulnStatus": "Undergoing Analysis"}}'},
+    ])
+    add_cve(db, release, "CVE-2026-5")
     quality = get_data_quality(db)
-    assert quality["total_cves"] == 2
+    assert quality["total_cves"] == 5
     assert quality["epss_coverage"]["covered"] == 1
+    assert quality["nvd_record_coverage"] == {"covered": 4, "missing": 1, "percentage": 80.0}
+    assert quality["nvd_cvss_coverage"] == {"covered": 1, "missing": 4, "percentage": 20.0}
     assert quality["nvd_coverage"]["covered"] == 1
+    assert quality["nvd_without_cvss"] == {"deferred": 1, "rejected": 1, "other": 1, "total": 3}
     assert quality["product_classification"]["covered"] == 1
 
 

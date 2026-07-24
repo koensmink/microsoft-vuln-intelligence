@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import and_, case, func, literal, or_, select, union_all
+from sqlalchemy import and_, case, cast, func, literal, or_, select, union_all
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models.entities import Cve, CveAiContext, CveEnrichment, CveProduct, Release, SyncRun
@@ -239,10 +240,29 @@ def _coverage(total: int, covered: int) -> dict:
 def get_data_quality(db: Session) -> dict:
     total = db.scalar(select(func.count(Cve.id))) or 0
     epss = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(CveEnrichment.epss_score.is_not(None))) or 0
-    nvd = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(
-        func.lower(CveEnrichment.source) == "nvd",
-        or_(CveEnrichment.cvss_score.is_not(None), and_(CveEnrichment.cvss_vector.is_not(None), func.trim(CveEnrichment.cvss_vector) != "")),
+    nvd_record = func.lower(CveEnrichment.source) == "nvd"
+    nvd_with_cvss = or_(
+        CveEnrichment.cvss_score.is_not(None),
+        and_(CveEnrichment.cvss_vector.is_not(None), func.trim(CveEnrichment.cvss_vector) != ""),
+    )
+    nvd_without_cvss = and_(
+        nvd_record,
+        CveEnrichment.cvss_score.is_(None),
+        or_(CveEnrichment.cvss_vector.is_(None), func.trim(CveEnrichment.cvss_vector) == ""),
+    )
+    nvd_records = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(nvd_record)) or 0
+    nvd_cvss = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(nvd_record, nvd_with_cvss)) or 0
+    if db.get_bind().dialect.name == "postgresql":
+        nvd_status = cast(CveEnrichment.raw_json, JSONB)["cve"]["vulnStatus"].astext
+    else:
+        nvd_status = func.json_extract(CveEnrichment.raw_json, "$.cve.vulnStatus")
+    deferred = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(
+        nvd_without_cvss, nvd_status == "Deferred",
     )) or 0
+    rejected = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(
+        nvd_without_cvss, nvd_status == "Rejected",
+    )) or 0
+    nvd_without_cvss_total = db.scalar(select(func.count(func.distinct(CveEnrichment.cve_id))).where(nvd_without_cvss)) or 0
     ai = db.scalar(select(func.count(func.distinct(CveAiContext.cve_id)))) or 0
     products = db.scalar(select(func.count(func.distinct(CveProduct.cve_id))).where(
         CveProduct.product_family.is_not(None), func.trim(CveProduct.product_family) != "",
@@ -251,6 +271,16 @@ def get_data_quality(db: Session) -> dict:
         func.lower(func.trim(CveProduct.product_category)) != "unknown",
     )) or 0
     return {
-        "total_cves": total, "epss_coverage": _coverage(total, epss), "nvd_coverage": _coverage(total, nvd),
+        "total_cves": total, "epss_coverage": _coverage(total, epss),
+        # Kept for API compatibility; its established meaning is NVD CVSS coverage.
+        "nvd_coverage": _coverage(total, nvd_cvss),
+        "nvd_record_coverage": _coverage(total, nvd_records),
+        "nvd_cvss_coverage": _coverage(total, nvd_cvss),
+        "nvd_without_cvss": {
+            "deferred": deferred,
+            "rejected": rejected,
+            "other": nvd_without_cvss_total - deferred - rejected,
+            "total": nvd_without_cvss_total,
+        },
         "ai_context_coverage": _coverage(total, ai), "product_classification": _coverage(total, products),
     }
