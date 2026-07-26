@@ -48,7 +48,11 @@ def build_source_payload(cve: Cve) -> dict[str, Any]:
         "cve_id": cve.cve_id,
         "title": cve.title,
         "description": cve.description,
-        "release_date": cve.release_date.isoformat() if cve.release_date else None,
+        "release_date": (
+            cve.release.release_date.isoformat()
+            if cve.release and cve.release.release_date
+            else None
+        ),
         "release": cve.release.release_name if cve.release else None,
         "severity": cve.severity,
         "impact": cve.impact,

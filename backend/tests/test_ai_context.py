@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -9,9 +11,9 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.entities import Cve, CveAiContext
+from app.models.entities import Cve, CveAiContext, Release
 from app.schemas.entities import PowerShellCheckOut
-from app.services.ai_context import validate_ai_context
+from app.services.ai_context import build_source_payload, validate_ai_context
 
 
 def ai_payload(applies_to=...):
@@ -35,6 +37,53 @@ def ai_payload(applies_to=...):
         "powershell_checks": [check],
         "verification_notes": [],
     }
+
+
+def test_source_payload_uses_linked_release_date():
+    release = Release(
+        release_name="2026-Jul", release_date=datetime(2026, 7, 14, 12, 30)
+    )
+    cve = Cve(cve_id="CVE-2026-0001", release=release)
+
+    payload = build_source_payload(cve)
+
+    assert payload["release_date"] == "2026-07-14T12:30:00"
+    assert payload["release"] == "2026-Jul"
+
+
+def test_source_payload_has_no_release_date_when_linked_release_has_no_date():
+    release = Release(release_name="2026-Jul", release_date=None)
+    cve = Cve(cve_id="CVE-2026-0002", release=release)
+
+    payload = build_source_payload(cve)
+
+    assert payload["release_date"] is None
+    assert payload["release"] == "2026-Jul"
+
+
+def test_source_payload_has_no_release_date_without_linked_release():
+    cve = Cve(cve_id="CVE-2026-0003", release_date=datetime(1, 1, 1))
+
+    payload = build_source_payload(cve)
+
+    assert payload["release_date"] is None
+    assert payload["release"] is None
+
+
+def test_source_payload_ignores_legacy_cve_release_date():
+    release = Release(
+        release_name="2026-Jul", release_date=datetime(2026, 7, 14, 12, 30)
+    )
+    cve = Cve(
+        cve_id="CVE-2026-0004",
+        release_date=datetime(1, 1, 1),
+        release=release,
+    )
+
+    payload = build_source_payload(cve)
+
+    assert payload["release_date"] == "2026-07-14T12:30:00"
+    assert payload["release"] == "2026-Jul"
 
 
 @pytest.fixture
