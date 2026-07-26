@@ -16,6 +16,11 @@ def _has_token(value: str, token: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", value) is not None
 
 
+def _has_prefix_phrase(value: str, phrase: str) -> bool:
+    """Match a product-name prefix without accepting a longer word."""
+    return re.match(rf"^{re.escape(phrase)}(?![a-z0-9])", value) is not None
+
+
 def _is_azure_linux_or_cbl(value: str) -> bool:
     return (
         value.startswith("azl3 ")
@@ -129,7 +134,7 @@ def map_product_name(raw_name: str | None) -> ProductMappingResult:
         (("microsoft hpc pack",), "Microsoft HPC Pack", "Compute Platform", 0.98),
     ]
     for phrases, family, category, confidence in explicit_rules:
-        if any(_has_token(value, phrase) for phrase in phrases):
+        if any(_has_prefix_phrase(value, phrase) for phrase in phrases):
             return ProductMappingResult(family, category, confidence)
 
     if re.match(r"^powershell\s+v?\d+(?:\.\d+)*\b", value):

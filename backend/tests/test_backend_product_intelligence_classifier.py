@@ -42,13 +42,13 @@ HIGH_CONFIDENCE_EXAMPLES = {
     "Microsoft Bing Images": ("Microsoft Bing", "Online Services", 0.98),
     "Microsoft Malware Protection Engine": ("Microsoft Defender", "Security", 0.99),
     "PowerShell 7.5": ("PowerShell", "Runtime / Framework", 0.99),
-    "Microsoft.Bcl.Memory": (".NET", "Runtime / Framework", 0.98),
+    "Microsoft.Bcl.Memory 10.0": (".NET", "Runtime / Framework", 0.98),
     "Microsoft OneNote": ("Microsoft 365 Apps", "Productivity", 0.98),
     "Microsoft Graph": ("Microsoft Graph", "Developer Tools", 0.98),
     "Microsoft Surface Pro 8": ("Microsoft Surface", "Hardware", 0.98),
     "Microsoft PC Manager": ("Windows", "Operating System Component", 0.96),
     "Microsoft Fabric": ("Microsoft Fabric", "Data Platform", 0.98),
-    "Nuance PowerScribe": ("Nuance PowerScribe", "Healthcare", 0.99),
+    "Nuance PowerScribe 360 4.0": ("Nuance PowerScribe", "Healthcare", 0.99),
     "Minecraft": ("Xbox / Gaming", "Gaming", 0.98),
     "Microsoft HPC Pack": ("Microsoft HPC Pack", "Compute Platform", 0.98),
 }
@@ -81,6 +81,7 @@ def test_backend_product_classifier_avoids_new_rule_substring_collisions() -> No
         "NotMicrosoft Bingeworthy",
         "Minecrafting Tools",
         "PowerShell Preview",
+        "Contoso Microsoft Purview Connector",
     ):
         assert map_product_name(raw_name).confidence < 0.98
 
