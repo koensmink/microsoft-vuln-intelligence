@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductOut(BaseModel):
@@ -107,7 +107,18 @@ class PowerShellCheckOut(BaseModel):
     title: str
     command: str
     explanation: str
-    applies_to: str
+    applies_to: list[str] = Field(default_factory=list)
+
+    @field_validator("applies_to", mode="before")
+    @classmethod
+    def normalize_applies_to(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str)]
+        return []
 
 
 class AiContextBatchFailureOut(BaseModel):
