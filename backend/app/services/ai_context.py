@@ -117,8 +117,18 @@ def validate_ai_context(data: dict[str, Any]) -> dict[str, Any]:
                     continue
 
                 check = dict(item)
-                for key in ("title", "command", "explanation", "applies_to"):
+                for key in ("title", "command", "explanation"):
                     check.setdefault(key, "")
+
+                applies_to = check.get("applies_to")
+                if isinstance(applies_to, str):
+                    check["applies_to"] = [applies_to]
+                elif isinstance(applies_to, list):
+                    check["applies_to"] = [
+                        target for target in applies_to if isinstance(target, str)
+                    ]
+                else:
+                    check["applies_to"] = []
                 checks.append(check)
 
             data[field] = checks
