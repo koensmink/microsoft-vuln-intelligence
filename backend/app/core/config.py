@@ -1,4 +1,7 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+
 class Settings(BaseSettings):
     database_url: str = "sqlite+pysqlite:///./dev.db"
     msrc_api_base_url: str = "https://api.msrc.microsoft.com/cvrf/v3.0/cvrf"
@@ -6,4 +9,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     ai_admin_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    ai_batch_concurrency: int = Field(default=3, ge=1, le=5)
+
+
 settings = Settings()
