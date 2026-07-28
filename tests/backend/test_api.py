@@ -1,12 +1,15 @@
 from collections.abc import Iterator
 from datetime import datetime
+import threading
+import time
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.models import Cve, CveEnrichment, CveProduct, Product, Release
@@ -373,10 +376,14 @@ def test_ai_context_batch_generate_requires_key_and_skips_cached(monkeypatch) ->
             "technical_context": "Technische context.",
             "confidence": "medium",
             "limitations": ["Beperkte brondata"],
+            "how_to_check": [],
+            "powershell_checks": [],
+            "verification_notes": [],
         }
 
     monkeypatch.setattr(settings, "ai_admin_api_key", "secret")
     monkeypatch.setattr(routes, "generate_with_openai", fake_generate_with_openai)
+    monkeypatch.setattr(routes, "SessionLocal", TestingSessionLocal)
     app.dependency_overrides[get_db] = override_get_db
     try:
         client = TestClient(app)
@@ -411,3 +418,134 @@ def test_ai_context_batch_generate_requires_key_and_skips_cached(monkeypatch) ->
         "failures": [],
     }
     assert calls == ["CVE-2026-7777"]
+
+
+@pytest.mark.parametrize(("concurrency", "expected_peak"), [(1, 1), (3, 3)])
+def test_ai_context_batch_generate_uses_bounded_concurrency(
+    monkeypatch, concurrency, expected_peak
+) -> None:
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fake_worker(cve_id, force):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return {"cve_id": cve_id, "status": "generated", "error": None}
+
+    monkeypatch.setattr(settings, "ai_batch_concurrency", concurrency)
+    monkeypatch.setattr(
+        routes,
+        "_select_ai_context_batch_cve_ids",
+        lambda db, limit, latest_only: ["CVE-1", "CVE-2", "CVE-3"],
+    )
+    monkeypatch.setattr(routes, "_run_ai_context_batch_worker", fake_worker)
+
+    result = routes.batch_generate_ai_context(db=object())
+
+    assert peak == expected_peak
+    assert result == {
+        "selected": 3,
+        "generated": 3,
+        "skipped": 0,
+        "failed": 0,
+        "failures": [],
+    }
+
+
+def test_batch_worker_owns_session_and_isolates_failure(monkeypatch) -> None:
+    sessions = []
+
+    class FakeSession:
+        def __init__(self):
+            self.committed = False
+            self.rolled_back = False
+            self.closed = False
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    def session_factory():
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    def fake_generate(db, cve_id, force):
+        if cve_id == "CVE-bad":
+            raise RuntimeError("OpenAI failed")
+        return cve_id == "CVE-new"
+
+    monkeypatch.setattr(routes, "SessionLocal", session_factory)
+    monkeypatch.setattr(routes, "_generate_ai_context_for_cve", fake_generate)
+
+    results = [
+        routes._run_ai_context_batch_worker("CVE-new", False),
+        routes._run_ai_context_batch_worker("CVE-cached", False),
+        routes._run_ai_context_batch_worker("CVE-bad", False),
+    ]
+
+    assert [result["status"] for result in results] == [
+        "generated",
+        "skipped",
+        "failed",
+    ]
+    assert results[2] == {
+        "cve_id": "CVE-bad",
+        "status": "failed",
+        "error": "OpenAI failed",
+    }
+    assert len({id(session) for session in sessions}) == 3
+    assert all(session.closed for session in sessions)
+    assert sessions[0].committed and sessions[1].committed
+    assert sessions[2].rolled_back and not sessions[2].committed
+
+
+def test_batch_summary_deduplicates_and_counts_independent_results(monkeypatch) -> None:
+    results = {
+        "CVE-new": {"cve_id": "CVE-new", "status": "generated", "error": None},
+        "CVE-cached": {"cve_id": "CVE-cached", "status": "skipped", "error": None},
+        "CVE-bad": {"cve_id": "CVE-bad", "status": "failed", "error": "bad response"},
+    }
+    monkeypatch.setattr(settings, "ai_batch_concurrency", 3)
+    monkeypatch.setattr(
+        routes,
+        "_select_ai_context_batch_cve_ids",
+        lambda db, limit, latest_only: [
+            "CVE-new",
+            "CVE-new",
+            "CVE-cached",
+            "CVE-bad",
+        ],
+    )
+    monkeypatch.setattr(
+        routes, "_run_ai_context_batch_worker", lambda cve_id, force: results[cve_id]
+    )
+
+    result = routes.batch_generate_ai_context(db=object())
+
+    assert result == {
+        "selected": 3,
+        "generated": 1,
+        "skipped": 1,
+        "failed": 1,
+        "failures": [{"cve_id": "CVE-bad", "error": "bad response"}],
+    }
+
+
+def test_ai_batch_concurrency_is_limited_to_one_through_five() -> None:
+    assert Settings().ai_batch_concurrency == 3
+    with pytest.raises(ValueError):
+        Settings(ai_batch_concurrency=0)
+    with pytest.raises(ValueError):
+        Settings(ai_batch_concurrency=6)

@@ -1,5 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import logging
+from time import perf_counter
+from typing import Literal, TypedDict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import case, func, or_, select
@@ -7,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.services.ai_context import build_source_payload, generate_with_openai, load_cve_for_ai, source_hash, upsert_ai_context
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
 from app.models.entities import CveAiContext, CveEnrichment, CveProduct
@@ -38,6 +41,12 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
+
+
+class AiContextWorkerResult(TypedDict):
+    cve_id: str
+    status: Literal["generated", "skipped", "failed"]
+    error: str | None
 
 
 def require_ai_admin_key(x_ai_admin_key: str | None = Header(default=None, alias="X-AI-Admin-Key")) -> None:
@@ -117,6 +126,26 @@ def _generate_ai_context_for_cve(db: Session, cve_id: str, force: bool) -> bool:
     generated = generate_with_openai(payload)
     upsert_ai_context(db, cve, generated, hash_value)
     return True
+
+
+def _run_ai_context_batch_worker(cve_id: str, force: bool) -> AiContextWorkerResult:
+    """Generate one context in a worker-owned transaction and database session."""
+    db: Session | None = None
+    try:
+        db = SessionLocal()
+        generated = _generate_ai_context_for_cve(db, cve_id, force)
+        db.commit()
+        status = "generated" if generated else "skipped"
+        logger.info("AI context batch CVE %s: %s", cve_id, status)
+        return {"cve_id": cve_id, "status": status, "error": None}
+    except Exception as exc:
+        if db is not None:
+            db.rollback()
+        logger.exception("AI context batch CVE %s: failed", cve_id)
+        return {"cve_id": cve_id, "status": "failed", "error": str(exc)}
+    finally:
+        if db is not None:
+            db.close()
 
 
 def _filtered_cve_ids_subquery(release: str | None, severity: str | None, kev: bool | None, min_epss: float | None):
@@ -559,29 +588,27 @@ def batch_generate_ai_context(
     _: None = Depends(require_ai_admin_key),
     db: Session = Depends(get_db),
 ):
-    selected_cve_ids = _select_ai_context_batch_cve_ids(db, limit, latest_only)
+    started_at = perf_counter()
+    selected_cve_ids = list(dict.fromkeys(_select_ai_context_batch_cve_ids(db, limit, latest_only)))
     summary = {"selected": len(selected_cve_ids), "generated": 0, "skipped": 0, "failed": 0, "failures": []}
 
-    for cve_id in selected_cve_ids:
-        try:
-            generated = _generate_ai_context_for_cve(db, cve_id, force)
-        except Exception as exc:
-            db.rollback()
-            summary["failed"] += 1
-            summary["failures"].append({"cve_id": cve_id, "error": str(exc)})
-            logger.exception("Failed batch AI context generation for %s", cve_id)
-            continue
-
-        if generated:
-            summary["generated"] += 1
-            logger.info("Generated AI context for %s", cve_id)
-        else:
-            summary["skipped"] += 1
-            logger.info("Skipped cached AI context for %s", cve_id)
+    with ThreadPoolExecutor(max_workers=settings.ai_batch_concurrency) as executor:
+        results = executor.map(
+            _run_ai_context_batch_worker,
+            selected_cve_ids,
+            [force] * len(selected_cve_ids),
+        )
+        for result in results:
+            summary[result["status"]] += 1
+            if result["status"] == "failed":
+                summary["failures"].append(
+                    {"cve_id": result["cve_id"], "error": result["error"]}
+                )
 
     logger.info(
-        "AI context batch complete: selected=%s generated=%s skipped=%s failed=%s",
+        "AI context batch complete: selected=%s generated=%s skipped=%s failed=%s duration_seconds=%.3f",
         summary["selected"], summary["generated"], summary["skipped"], summary["failed"],
+        perf_counter() - started_at,
     )
     return summary
 
