@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
+from app.core.stats_cache import stats_cache
 from app.db.session import SessionLocal, get_db
 from app.services.ai_context import build_source_payload, generate_with_openai, load_cve_for_ai, source_hash, upsert_ai_context
 from app.models import AffectedProduct, Cve, Product, ProductMapping, Release
@@ -400,7 +401,7 @@ def prioritized_cves(
 @router.get("/cves", response_model=list[CveOut])
 def list_cves(
     db: Session = Depends(get_db),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     search: str | None = None,
     severity: str | None = None,
@@ -999,6 +1000,9 @@ def stats_timeseries(db: Session = Depends(get_db)):
 @router.post("/admin/sync")
 def trigger_sync(payload: SyncRequest):
     release = payload.release_name or payload.release
+    # This endpoint only acknowledges a completed external sync request today.
+    # Invalidate before returning success so subsequent summaries cannot be stale.
+    stats_cache.clear()
     return {
         "status": "accepted",
         "release_name": release,
