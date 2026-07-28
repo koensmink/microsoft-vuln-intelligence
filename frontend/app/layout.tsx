@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { getJson } from "../src/api";
+import { getGlobalStats } from "../src/api";
 import { SidebarNav } from "./components/sidebar-nav";
 import "./globals.css";
 
@@ -59,7 +59,7 @@ function DataSourcesCard({ stats }: { stats: ShellStats }) {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const stats = await getJson<ShellStats>("/stats", {});
+  const stats = await getGlobalStats<ShellStats>();
 
   return (
     <html lang="en" className="dark">

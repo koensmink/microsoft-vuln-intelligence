@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     ai_admin_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     ai_batch_concurrency: int = Field(default=3, ge=1, le=5)
+    stats_cache_ttl_seconds: int = Field(default=300, ge=0)
 
 
 settings = Settings()
