@@ -1,5 +1,6 @@
 import logging
 from time import perf_counter
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -14,6 +15,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.rate_limit_per_minute}/minute"])
 app = FastAPI(title="Microsoft Vulnerability Intelligence API")
 app.state.limiter = limiter
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://microsoftpatchtuesday.nl",
+        "https://www.microsoftpatchtuesday.nl",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.add_middleware(SlowAPIMiddleware)
 
 
